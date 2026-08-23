@@ -76,18 +76,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // El reviewer trabaja en su propia organización de Testing — nunca en la real.
+    const testOrgQuery = await db.collection("organizations").where("ownerUid", "==", reviewerAuth.uid).limit(1).get();
+    let testOrgId: string;
+    if (!testOrgQuery.empty) {
+      testOrgId = testOrgQuery.docs[0].id;
+    } else {
+      const testOrgRef = await db.collection("organizations").add({
+        name: "Royal Sales AI — Testing",
+        ownerUid: reviewerAuth.uid,
+        isTestOrganization: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      testOrgId = testOrgRef.id;
+    }
+
     await db.collection("users").doc(reviewerAuth.uid).set(
       {
         email: REVIEWER_EMAIL.toLowerCase(),
         role: "reviewer",
-        organizationId: null,
+        organizationId: testOrgId,
         isTestUser: true,
         active: true,
         updatedAt: new Date().toISOString(),
       },
       { merge: true }
     );
-    resultado.reviewer = { uid: reviewerAuth.uid };
+    resultado.reviewer = { uid: reviewerAuth.uid, organizationId: testOrgId };
 
     return NextResponse.json({ ok: true, ...resultado });
   } catch (err: any) {
