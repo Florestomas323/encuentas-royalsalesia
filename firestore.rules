@@ -1,0 +1,55 @@
+rules_version = '2';
+
+// FASE 2 — usuarios, organizaciones y roles.
+//
+// Regla de oro: el rol, organizationId e isTestUser de un usuario los escribe
+// ÚNICAMENTE el servidor con Firebase Admin SDK (ver app/api/admin/seed-users),
+// que no pasa por estas reglas. Por eso aquí no se permite NINGÚN write desde
+// el cliente en /users — ni siquiera al propio dueño del documento. Esto evita
+// que alguien se autoasigne el rol "distributor" o "reviewer" editando su
+// propio documento desde el navegador.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function myRole() {
+      return myProfile().role;
+    }
+
+    function myOrgId() {
+      return myProfile().organizationId;
+    }
+
+    // users: cada quien lee solamente su propio documento.
+    match /users/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // organizations: el distribuidor dueño puede leer su propia organización.
+    // La edición (por ejemplo, cambiar el nombre desde "configuración") se
+    // habilita en una fase posterior mediante una server action, no aquí.
+    match /organizations/{orgId} {
+      allow read: if isSignedIn() && myRole() == 'distributor' && myOrgId() == orgId;
+      allow write: if false;
+    }
+
+    // organizationMembers: se habilita cuando se implementen vendedores.
+    match /organizationMembers/{memberId} {
+      allow read: if isSignedIn() && myOrgId() == resource.data.organizationId;
+      allow write: if false;
+    }
+
+    // Todo lo demás queda cerrado por defecto hasta que se implemente esa colección.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
