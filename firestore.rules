@@ -1,53 +1,118 @@
 rules_version = '2';
 
-// FASE 2 — usuarios, organizaciones y roles.
-//
-// Regla de oro: el rol, organizationId e isTestUser de un usuario los escribe
-// ÚNICAMENTE el servidor con Firebase Admin SDK (ver app/api/admin/seed-users),
-// que no pasa por estas reglas. Por eso aquí no se permite NINGÚN write desde
-// el cliente en /users — ni siquiera al propio dueño del documento. Esto evita
-// que alguien se autoasigne el rol "distributor" o "reviewer" editando su
-// propio documento desde el navegador.
+// FASE 3A/3B — multi-tenant real.
+// Principios:
+// 1. Nadie lee ni escribe fuera de su organizationId.
+// 2. En /users no hay writes desde el cliente — role, organizationId e isTestUser
+//    solo los escribe el servidor (Admin SDK, que no pasa por estas reglas).
+// 3. En documentos comerciales, organizationId, isTestData y salespersonId no
+//    pueden cambiarse en un update.
+// 4. El reviewer opera como administrador PERO únicamente dentro de su propia
+//    organización de Testing — el aislamiento por organizationId ya impide que
+//    vea o contamine datos reales.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isSignedIn() {
-      return request.auth != null;
+    function isSignedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function myRole() { return me().role; }
+    function myOrgId() { return me().organizationId; }
+    function isOrgManager() { return myRole() == 'distributor' || myRole() == 'reviewer'; }
+
+    function creatingInMyOrg() {
+      return request.resource.data.organizationId == myOrgId()
+        && request.resource.data.isTestData == me().isTestUser
+        && request.resource.data.createdBy == request.auth.uid;
+    }
+    function resourceInMyOrg() { return resource.data.organizationId == myOrgId(); }
+    function ownsResource() { return resource.data.salespersonId == request.auth.uid; }
+    function protectedFieldsUnchanged() {
+      return request.resource.data.organizationId == resource.data.organizationId
+        && request.resource.data.isTestData == resource.data.isTestData;
     }
 
-    function myProfile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
-    function myRole() {
-      return myProfile().role;
-    }
-
-    function myOrgId() {
-      return myProfile().organizationId;
-    }
-
-    // users: cada quien lee solamente su propio documento.
     match /users/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
       allow write: if false;
     }
 
-    // organizations: el distribuidor dueño puede leer su propia organización.
-    // La edición (por ejemplo, cambiar el nombre desde "configuración") se
-    // habilita en una fase posterior mediante una server action, no aquí.
     match /organizations/{orgId} {
-      allow read: if isSignedIn() && myRole() == 'distributor' && myOrgId() == orgId;
+      allow read: if isSignedIn() && myOrgId() == orgId;
       allow write: if false;
     }
 
-    // organizationMembers: se habilita cuando se implementen vendedores.
     match /organizationMembers/{memberId} {
-      allow read: if isSignedIn() && myOrgId() == resource.data.organizationId;
+      allow read: if isSignedIn() && resource.data.organizationId == myOrgId();
       allow write: if false;
     }
 
-    // Todo lo demás queda cerrado por defecto hasta que se implemente esa colección.
+    // customers usa assignedSalespersonId como campo de ownership.
+    match /customers/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg()
+        && request.resource.data.assignedSalespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg()
+        && (isOrgManager() || resource.data.assignedSalespersonId == request.auth.uid);
+      allow update: if isSignedIn() && resourceInMyOrg() && protectedFieldsUnchanged()
+        && request.resource.data.assignedSalespersonId == resource.data.assignedSalespersonId
+        && (isOrgManager() || resource.data.assignedSalespersonId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    // El mismo patrón para el resto de colecciones comerciales (ownership: salespersonId).
+    match /visits/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg() && request.resource.data.salespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg() && (isOrgManager() || ownsResource());
+      allow update: if isSignedIn() && resourceInMyOrg() && protectedFieldsUnchanged()
+        && request.resource.data.salespersonId == resource.data.salespersonId
+        && (isOrgManager() || ownsResource());
+      allow delete: if false;
+    }
+
+    match /surveyResponses/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg() && request.resource.data.salespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg() && (isOrgManager() || ownsResource());
+      allow update, delete: if false;
+    }
+
+    match /aiProfiles/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg() && request.resource.data.salespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg() && (isOrgManager() || ownsResource());
+      allow update, delete: if false;
+    }
+
+    match /visitResults/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg() && request.resource.data.salespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg() && (isOrgManager() || ownsResource());
+      allow update, delete: if false;
+    }
+
+    match /purchases/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg() && request.resource.data.salespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg() && (isOrgManager() || ownsResource());
+      allow update, delete: if false;
+    }
+
+    match /followups/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg() && request.resource.data.salespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg() && (isOrgManager() || ownsResource());
+      allow update: if isSignedIn() && resourceInMyOrg() && protectedFieldsUnchanged()
+        && request.resource.data.salespersonId == resource.data.salespersonId
+        && (isOrgManager() || ownsResource());
+      allow delete: if false;
+    }
+
+    match /customerInteractions/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg() && request.resource.data.salespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg() && (isOrgManager() || ownsResource());
+      allow update, delete: if false;
+    }
+
+    match /notes/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg() && request.resource.data.salespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg() && (isOrgManager() || ownsResource());
+      allow update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -1,0 +1,28 @@
+{
+  "indexes": [
+    { "collectionGroup": "customers", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "organizationId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "customers", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "organizationId", "order": "ASCENDING" },
+      { "fieldPath": "assignedSalespersonId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "visits", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "organizationId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "visits", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "organizationId", "order": "ASCENDING" },
+      { "fieldPath": "salespersonId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "followups", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "organizationId", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "scheduledAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "followups", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "organizationId", "order": "ASCENDING" },
+      { "fieldPath": "salespersonId", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "scheduledAt", "order": "ASCENDING" } ] }
+  ],
+  "fieldOverrides": []
+}
