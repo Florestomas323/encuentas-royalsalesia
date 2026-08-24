@@ -121,6 +121,19 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Catálogo de productos: COMPARTIDO por toda la organización (sin
+    // isTestData ni ownership individual). Cualquier miembro de la org lo lee;
+    // la siembra/actualización del catálogo la hace el cliente al iniciar
+    // sesión (seedCatalogIfEmpty), así que create/update se permiten dentro de
+    // la organización. No se borra desde cliente salvo limpieza de seeds viejos.
+    match /products/{id} {
+      allow read: if isSignedIn() && resourceInMyOrg();
+      allow create: if isSignedIn() && request.resource.data.organizationId == myOrgId();
+      allow update: if isSignedIn() && resourceInMyOrg()
+        && request.resource.data.organizationId == resource.data.organizationId;
+      allow delete: if isSignedIn() && resourceInMyOrg();
+    }
+
     // Fase B/D — servicios postventa. Ownership por assignedSalespersonId.
     // Lo completa/reasigna el dueño o un manager; nunca se borra desde cliente.
     match /postSaleServices/{id} {
