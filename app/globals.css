@@ -110,3 +110,25 @@ body {
 .animate-fade {
   animation: rsai-fade 0.3s ease both;
 }
+
+@keyframes rsai-sheet {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-sheet {
+  animation: rsai-sheet 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

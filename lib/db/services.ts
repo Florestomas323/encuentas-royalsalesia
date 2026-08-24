@@ -3,7 +3,7 @@
 import { db } from "@/lib/firebase/client";
 import {
   addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot,
-  query, serverTimestamp, updateDoc, where,
+  query, serverTimestamp, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import type { UserProfile } from "@/types/user";
 
@@ -56,9 +56,54 @@ export function subscribeCustomers(ctx: Ctx, cb: (rows: any[]) => void, onError?
   const q = query(collection(db, "customers"), ...clauses);
   return onSnapshot(
     q,
-    (snap) => cb(sortByDateDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt")),
+    (snap) => {
+      // Excluir eliminados (soft delete) en memoria: evita índices y mantiene
+      // el historial intacto en la base de datos.
+      const rows = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as any) }))
+        .filter((c: any) => !c.isDeleted);
+      cb(sortByDateDesc(rows, "createdAt"));
+    },
     onError
   );
+}
+
+// ---------- SOFT DELETE de clientes ----------
+// Nunca borra el documento ni su historial (visitas, compras, encuestas).
+// Solo marca flags. Valida organización y rol antes de tocar nada.
+export async function softDeleteCustomer(ctx: Ctx, customerId: string) {
+  const snap = await getDoc(doc(db, "customers", customerId));
+  if (!snap.exists()) throw new Error("El cliente no existe.");
+  const c = snap.data() as any;
+  if (c.organizationId !== ctx.profile.organizationId) {
+    throw new Error("No puedes eliminar clientes de otra organización.");
+  }
+  const esDueno = c.assignedSalespersonId === ctx.uid;
+  if (!isOrgManager(ctx) && !esDueno) {
+    throw new Error("Solo puedes eliminar tus propios clientes.");
+  }
+  await updateDoc(doc(db, "customers", customerId), {
+    isDeleted: true,
+    deletedAt: serverTimestamp(),
+    deletedBy: ctx.uid,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+// Preparado para una futura papelera / restaurar (aún no expuesto en UI).
+export async function restoreCustomer(ctx: Ctx, customerId: string) {
+  const snap = await getDoc(doc(db, "customers", customerId));
+  if (!snap.exists()) throw new Error("El cliente no existe.");
+  const c = snap.data() as any;
+  if (c.organizationId !== ctx.profile.organizationId) {
+    throw new Error("No puedes restaurar clientes de otra organización.");
+  }
+  await updateDoc(doc(db, "customers", customerId), {
+    isDeleted: false,
+    deletedAt: null,
+    restoredBy: ctx.uid,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function getCustomer(id: string) {
@@ -140,6 +185,70 @@ export async function savePurchase(ctx: Ctx, visitId: string, customerId: string
     visitId, customerId, salespersonId: ctx.uid, ...data, purchaseDate: serverTimestamp(), ...baseFields(ctx),
   });
   return ref.id;
+}
+
+// Item de compra normalizado para asociarlo a productos del catálogo.
+export type PurchaseItemInput = {
+  productId: string;
+  productNameSnapshot: string;
+  quantity: number;
+  unitPrice?: number;
+  pieceIdsSnapshot?: string[];
+};
+
+/**
+ * Guarda la compra y, en la misma operación, sus items ligados a productos del
+ * catálogo (purchaseItems). Si no se pasan items (p. ej. compra en texto
+ * libre), se comporta igual que savePurchase.
+ */
+export async function savePurchaseWithItems(
+  ctx: Ctx,
+  visitId: string,
+  customerId: string,
+  data: Record<string, unknown>,
+  items: PurchaseItemInput[] = [],
+) {
+  const purchaseRef = await addDoc(collection(db, "purchases"), {
+    visitId, customerId, salespersonId: ctx.uid, ...data, purchaseDate: serverTimestamp(), ...baseFields(ctx),
+  });
+  const validItems = items.filter((it) => it.productId && it.quantity > 0);
+  if (validItems.length) {
+    const batch = writeBatch(db);
+    const base = baseFields(ctx);
+    for (const it of validItems) {
+      batch.set(doc(collection(db, "purchaseItems")), {
+        purchaseId: purchaseRef.id,
+        customerId,
+        visitId,
+        productId: it.productId,
+        productNameSnapshot: it.productNameSnapshot,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice ?? null,
+        pieceIdsSnapshot: it.pieceIdsSnapshot ?? [],
+        ...base,
+      });
+    }
+    await batch.commit();
+  }
+  return purchaseRef.id;
+}
+
+export async function getPurchasesForCustomer(ctx: Ctx, customerId: string) {
+  const snap = await getDocs(query(
+    collection(db, "purchases"),
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("customerId", "==", customerId),
+  ));
+  return sortByDateDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "purchaseDate");
+}
+
+export async function getPurchaseItemsForCustomer(ctx: Ctx, customerId: string) {
+  const snap = await getDocs(query(
+    collection(db, "purchaseItems"),
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("customerId", "==", customerId),
+  ));
+  return sortByDateDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt");
 }
 
 // ---------- SEGUIMIENTOS ----------

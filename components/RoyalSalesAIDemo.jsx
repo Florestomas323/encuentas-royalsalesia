@@ -5,7 +5,7 @@ import {
   Home, Users, Calendar, Plus, ChevronRight, Loader2, MessageCircle, Copy, Check,
   ArrowLeft, Clock, AlertCircle, Sparkles, Search, CheckCircle2, XCircle, HelpCircle,
   Eye, ListChecks, PlayCircle, CloudUpload, Cloud, Menu, User, Building2, Settings,
-  LogOut, TrendingUp, FlaskConical, CalendarClock, ClipboardList,
+  LogOut, TrendingUp, FlaskConical, CalendarClock, ClipboardList, Trash2, Package, Boxes,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { auth } from "@/lib/firebase/client";
@@ -14,10 +14,15 @@ import { calculateOpportunity, OPPORTUNITY_LABELS } from "@/lib/scoring/opportun
 import {
   findCustomerByPhone, createCustomer, updateCustomer, subscribeCustomers, getCustomer,
   createVisit, updateVisit, findInProgressVisit, getVisitsForCustomer,
-  saveSurveyResponses, saveAiProfile, saveVisitResult, savePurchase,
+  saveSurveyResponses, saveAiProfile, saveVisitResult, savePurchaseWithItems,
   createFollowup, subscribeFollowups, completeFollowup, getFollowupsForCustomer,
   logInteraction, getInteractionsForCustomer, getRecentVisits, tsToDate,
+  softDeleteCustomer, getPurchaseItemsForCustomer,
 } from "@/lib/db/services";
+import { subscribeProducts } from "@/lib/db/catalog";
+import { seedCatalogIfEmpty } from "@/lib/db/seed";
+import ProductPicker from "@/components/catalog/ProductPicker";
+import ConfirmSheet from "@/components/ui/ConfirmSheet";
 
 // ---------- ENCUESTA (claves semánticas camelCase — solo preguntas para el cliente) ----------
 const PREGUNTAS = [
@@ -171,6 +176,13 @@ export default function RoyalSalesAIDemo() {
   const [fichaTimeline, setFichaTimeline] = useState(null);
   const [waLogFollowup, setWaLogFollowup] = useState(null);
 
+  // Fase A: catálogo, items de compra, eliminación y compras de la ficha.
+  const [productos, setProductos] = useState([]);
+  const [itemsCompra, setItemsCompra] = useState([]);
+  const [fichaCompras, setFichaCompras] = useState(null);
+  const [confirmarEliminar, setConfirmarEliminar] = useState(null); // cliente a eliminar
+  const [eliminando, setEliminando] = useState(false);
+
   const draftTimer = useRef(null);
 
   function mostrarToast(msg) {
@@ -197,7 +209,10 @@ export default function RoyalSalesAIDemo() {
     if (!user || !profile?.organizationId) return;
     const un1 = subscribeCustomers(ctx, setClientes, () => setClientes([]));
     const un2 = subscribeFollowups(ctx, setFollowups, () => setFollowups([]));
-    return () => { un1(); un2(); };
+    const un3 = subscribeProducts(ctx, setProductos, () => setProductos([]));
+    // Sembrar catálogo de ejemplo una sola vez (idempotente) por organización.
+    seedCatalogIfEmpty(ctx).catch((e) => console.log("[v0] seed catálogo:", e?.message));
+    return () => { un1(); un2(); un3(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.organizationId]);
 
@@ -336,21 +351,31 @@ export default function RoyalSalesAIDemo() {
     if (procesando) return;
     setProcesando(true);
     try {
+      // Nombres de producto: del catálogo (items) o del texto libre de respaldo.
+      const nombresProductos = itemsCompra.length
+        ? itemsCompra.map((it) => it.productNameSnapshot)
+        : (compraData.producto ? [compraData.producto] : []);
+      const resumenProducto = nombresProductos.join(", ");
+
       let contenido = {};
       try {
         contenido = await llamarIA(auth, {
           type: "loyalty",
           profile: perfilIA,
-          product: compraData.producto,
+          product: resumenProducto,
           favoriteMeal: respuestas.favoriteMeal,
         }) || {};
       } catch { /* plan sin personalización — no bloquea */ }
 
-      await savePurchase(ctx, visitId, customerId, {
-        amount: compraData.monto || null,
-        products: compraData.producto ? [compraData.producto] : [],
-        notes: "",
-      });
+      await savePurchaseWithItems(
+        ctx, visitId, customerId,
+        {
+          amount: compraData.monto || null,
+          products: nombresProductos,
+          notes: "",
+        },
+        itemsCompra,
+      );
       await saveVisitResult(ctx, visitId, customerId, "purchased", {});
       await updateVisit(ctx, visitId, { status: "completed", completedAt: new Date(), outcome: "purchased" });
       await updateCustomer(ctx, customerId, { status: "purchased" });
@@ -366,6 +391,7 @@ export default function RoyalSalesAIDemo() {
         plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "" });
       }
       setPlanFidelizacion(plan);
+      setItemsCompra([]);
       try { localStorage.removeItem(`rsai-draft-${visitId}`); } catch {}
       mostrarToast("Compra y plan guardados");
       setScreen("planFidelizacion");
@@ -441,7 +467,8 @@ export default function RoyalSalesAIDemo() {
 
   // ---------- ficha del cliente ----------
   async function abrirFicha(c) {
-    setFichaCliente(c); setFichaTimeline(null); setScreen("fichaCliente");
+    setFichaCliente(c); setFichaTimeline(null); setFichaCompras(null); setScreen("fichaCliente");
+    getPurchaseItemsForCustomer(ctx, c.id).then(setFichaCompras).catch(() => setFichaCompras([]));
     try {
       const [visitas, fups, inter] = await Promise.all([
         getVisitsForCustomer(ctx, c.id),
@@ -463,6 +490,22 @@ export default function RoyalSalesAIDemo() {
       setFichaTimeline(eventos);
     } catch {
       setFichaTimeline([]);
+    }
+  }
+
+  async function eliminarClienteConfirmado() {
+    if (!confirmarEliminar || eliminando) return;
+    setEliminando(true);
+    try {
+      await softDeleteCustomer(ctx, confirmarEliminar.id);
+      setConfirmarEliminar(null);
+      setFichaCliente(null);
+      setScreen("clientes");
+      mostrarToast("Cliente eliminado");
+    } catch (e) {
+      mostrarToast(e?.message || "No pudimos eliminar el cliente.");
+    } finally {
+      setEliminando(false);
     }
   }
 
@@ -886,8 +929,18 @@ export default function RoyalSalesAIDemo() {
       <ScreenWrap>
         {Toast}
         <TopBar title="Detalles de la compra" onBack={() => setScreen("resultado")} />
-        <div className="px-5 space-y-3 flex-1">
-          <Campo label="Producto / set" value={compraData.producto} onChange={(v) => setCompraData({ ...compraData, producto: v })} placeholder="Set completo 12 piezas" />
+        <div className="px-5 space-y-4 flex-1 pb-4">
+          <div>
+            <p className="text-[13px] font-medium text-muted mb-2">Productos comprados</p>
+            <ProductPicker
+              products={productos}
+              value={itemsCompra}
+              onChange={setItemsCompra}
+              allowFreeText
+              freeText={compraData.producto}
+              onFreeTextChange={(v) => setCompraData({ ...compraData, producto: v })}
+            />
+          </div>
           <Campo label="Monto aproximado" value={compraData.monto} onChange={(v) => setCompraData({ ...compraData, monto: v })} placeholder="$1,850" />
         </div>
         <div className="px-5 pb-8">
@@ -1117,7 +1170,49 @@ export default function RoyalSalesAIDemo() {
               </div>
             )}
           </div>
+
+          {/* Productos comprados */}
+          {fichaCompras && fichaCompras.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2">Productos comprados</p>
+              <div className="space-y-2">
+                {fichaCompras.map((it) => (
+                  <Card key={it.id} className="p-3.5 flex items-center gap-3">
+                    <span className={`w-10 h-10 rounded-xl grid place-items-center shrink-0 ${it.pieceIdsSnapshot?.length ? "bg-accent-soft" : "bg-brand/8"}`}>
+                      {it.pieceIdsSnapshot?.length ? <Boxes className="w-5 h-5 text-accent" /> : <Package className="w-5 h-5 text-brand" />}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-display font-semibold text-[15px] text-brand-deep truncate">{it.productNameSnapshot}</p>
+                      {it.pieceIdsSnapshot?.length ? (
+                        <p className="text-[12px] text-muted">Set · {it.pieceIdsSnapshot.length} piezas incluidas</p>
+                      ) : null}
+                    </div>
+                    <Badge className="text-brand-dark bg-brand/[0.06] border-brand/10">x{it.quantity}</Badge>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Eliminar cliente (soft delete) */}
+          <div className="pt-2">
+            <Boton variant="danger" onClick={() => setConfirmarEliminar(c)}>
+              <Trash2 className="w-[18px] h-[18px]" /> Eliminar cliente
+            </Boton>
+          </div>
         </div>
+
+        <ConfirmSheet
+          open={!!confirmarEliminar}
+          onClose={() => setConfirmarEliminar(null)}
+          onConfirm={eliminarClienteConfirmado}
+          loading={eliminando}
+          title="¿Eliminar este cliente?"
+          description="Se ocultará de tu lista de clientes. Su historial de visitas y compras se conserva y no se pierde."
+          confirmLabel="Eliminar"
+          cancelLabel="Cancelar"
+          tone="danger"
+        />
       </ScreenWrap>
     );
   }
