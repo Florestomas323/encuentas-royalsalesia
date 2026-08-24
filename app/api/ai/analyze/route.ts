@@ -82,8 +82,10 @@ export async function POST(req: Request) {
 
     return fail(`Tipo de análisis no reconocido: ${type}`);
   } catch (err: any) {
-    // No exponemos detalles internos del proveedor al cliente.
+    // Devolvemos el mensaje real (es la app del propio usuario y necesita ver
+    // por qué falla: key inválida, sin crédito, modelo inexistente, etc.).
     console.error("[ai/analyze]", type, err?.message);
-    return fail("No pudimos generar el análisis en este momento.", 502);
+    const detalle = typeof err?.message === "string" ? err.message : "";
+    return fail(detalle || "No pudimos generar el análisis en este momento.", 502);
   }
 }

@@ -27,8 +27,19 @@ export async function runAI(prompt: string, maxTokens = 1200): Promise<unknown> 
   });
 
   if (!res.ok) {
-    // No registramos el body completo para no filtrar datos ni la key.
-    throw new Error(`Proveedor de IA respondió ${res.status}`);
+    // Extraemos el mensaje del proveedor (sin filtrar la key) para saber la
+    // causa exacta: 401 = key inválida, 429 = sin crédito/cuota, 404 = modelo
+    // inexistente. Sin esto, todos los fallos se ven iguales en la app.
+    let detalle = "";
+    try {
+      const errBody = await res.json();
+      detalle = errBody?.error?.message || errBody?.error?.code || "";
+    } catch {
+      /* respuesta sin JSON */
+    }
+    throw new Error(
+      `Proveedor de IA respondió ${res.status}${detalle ? `: ${detalle}` : ""}`
+    );
   }
 
   const data = await res.json();

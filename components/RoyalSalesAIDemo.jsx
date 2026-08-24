@@ -312,8 +312,8 @@ export default function RoyalSalesAIDemo() {
       setPerfilIA(perfil);
       saveAiProfile(ctx, visitId, customerId, perfil).catch(() => {});
       setScreen("perfilRapido");
-    } catch {
-      setErrorIA("No pudimos generar el análisis en este momento.");
+    } catch (e) {
+      setErrorIA(e?.message || "No pudimos generar el análisis en este momento.");
       setScreen("errorAnalisis");
     } finally {
       setLoadingIA(false);
@@ -734,7 +734,12 @@ export default function RoyalSalesAIDemo() {
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
           <AlertCircle className="w-10 h-10 text-orange-500 mb-4" />
           <p className="font-bold text-green-950 text-lg mb-1">No pudimos generar el análisis</p>
-          <p className="text-sm text-gray-500 mb-6">Tu encuesta está guardada. Puedes reintentar o continuar sin análisis IA.</p>
+          <p className="text-sm text-gray-500 mb-4">Tu encuesta está guardada. Puedes reintentar o continuar sin análisis IA.</p>
+          {errorIA && (
+            <p className="text-xs text-gray-400 mb-4 break-all bg-gray-50 rounded-lg px-3 py-2 w-full">
+              {`Detalle: ${errorIA}`}
+            </p>
+          )}
           <div className="w-full space-y-2">
             <Boton onClick={analizarConIA}>Reintentar</Boton>
             <Boton variant="ghost" onClick={() => setScreen("resultado")}>Continuar sin análisis</Boton>
