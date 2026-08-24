@@ -6,6 +6,7 @@ import {
   query, serverTimestamp, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import type { UserProfile } from "@/types/user";
+import { capabilitiesFor, tituloDe } from "@/lib/catalog/classify";
 
 export type Ctx = { uid: string; profile: UserProfile };
 
@@ -142,6 +143,91 @@ export async function repairFollowupsForDeletedCustomers(ctx: Ctx): Promise<numb
   let total = 0;
   for (const c of clientesSnap.docs) {
     total += await cancelActiveFollowupsForCustomer(ctx, c.id, "customer_deleted");
+  }
+  return total;
+}
+
+// Mensaje seguro (SIN cocina) para reemplazar etapas de receta mal generadas en
+// clientes que no tienen ningún producto culinario. No es una receta.
+const MENSAJE_CUIDADO_GENERICO =
+  "Hola {nombre}, queremos que aproveches al máximo tu producto. Recuerda seguir las indicaciones de uso y cuidado para conservarlo en óptimas condiciones. ¿Tienes alguna duda sobre su funcionamiento? Con gusto te ayudamos.";
+
+function esEtapaReceta(f: any): boolean {
+  if (f?.contentType === "recipe") return true;
+  const txt = `${f?.objective || ""}`.toLowerCase();
+  return txt.includes("receta");
+}
+
+/**
+ * Corrige datos existentes (regla #7): para cada cliente NO eliminado cuyos
+ * productos comprados NO admitan recetas, reemplaza sus etapas de tipo receta
+ * por contenido de "cuidado" (sin borrar el seguimiento ni el resto del
+ * historial). Idempotente: solo toca etapas de receta que aún sigan activas.
+ * Devuelve cuántas etapas corrigió.
+ */
+export async function repairLoyaltyContentForNonCookingCustomers(ctx: Ctx): Promise<number> {
+  const orgId = ctx.profile.organizationId;
+
+  // Catálogo de la organización indexado por id (para resolver capacidades).
+  const prodSnap = await getDocs(query(
+    collection(db, "products"),
+    where("organizationId", "==", orgId),
+  ));
+  const prodById = new Map<string, any>();
+  prodSnap.docs.forEach((d) => prodById.set(d.id, { id: d.id, ...(d.data() as any) }));
+
+  // Clientes no eliminados.
+  const clientesSnap = await getDocs(query(
+    collection(db, "customers"),
+    where("organizationId", "==", orgId),
+  ));
+  const clientes = clientesSnap.docs.filter((d) => !(d.data() as any).isDeleted);
+
+  let total = 0;
+  for (const c of clientes) {
+    // Productos comprados por el cliente.
+    const itemsSnap = await getDocs(query(
+      collection(db, "purchaseItems"),
+      where("organizationId", "==", orgId),
+      where("customerId", "==", c.id),
+    ));
+    if (itemsSnap.empty) continue; // sin compras registradas: no tocamos nada.
+
+    const admiteRecetas = itemsSnap.docs.some((d) => {
+      const it = d.data() as any;
+      const prod = it.productId ? prodById.get(it.productId) : null;
+      const base = prod || { name: it.productNameSnapshot };
+      return capabilitiesFor(base).supportsRecipes;
+    });
+    if (admiteRecetas) continue; // al menos un producto culinario: se permite receta.
+
+    // Ningún producto culinario => corregir etapas de receta activas.
+    const fupSnap = await getDocs(query(
+      collection(db, "followups"),
+      where("organizationId", "==", orgId),
+      where("customerId", "==", c.id),
+    ));
+    const aCorregir = fupSnap.docs.filter((d) => {
+      const f = d.data() as any;
+      const activo = f.status !== "completed" && f.status !== "cancelled";
+      return activo && esEtapaReceta(f);
+    });
+    if (!aCorregir.length) continue;
+
+    const batch = writeBatch(db);
+    for (const d of aCorregir) {
+      batch.update(d.ref, {
+        contentType: "care",
+        supportsRecipes: false,
+        objective: tituloDe("care"),
+        suggestedMessage: MENSAJE_CUIDADO_GENERICO,
+        contentCorrectedReason: "non_cooking_product",
+        contentCorrectedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      total++;
+    }
+    await batch.commit();
   }
   return total;
 }

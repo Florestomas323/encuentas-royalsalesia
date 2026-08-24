@@ -23,7 +23,7 @@ import {
 import { subscribeProducts } from "@/lib/db/catalog";
 import { seedCatalogIfEmpty, upgradeCatalogCapabilities } from "@/lib/db/seed";
 import {
-  classifyFamily, capabilitiesFor, buildLoyaltyPlan, allowedContentTypes, planTrackFor,
+  classifyFamily, capabilitiesFor, buildLoyaltyPlan, allowedContentTypes,
 } from "@/lib/catalog/classify";
 import { getOrgCurrency, formatCurrency, parseAmount } from "@/lib/format/currency";
 import ProductPicker from "@/components/catalog/ProductPicker";
@@ -762,7 +762,7 @@ export default function RoyalSalesAIDemo() {
                 className="w-full border-2 border-gray-100 rounded-xl p-4 text-base text-gray-800 focus:border-green-800 focus:outline-none" placeholder="$ mensual" />
               {respuesta && respuesta !== "omitido" && Number(respuesta) > 0 && (
                 <p className="text-xs text-gray-400 mt-2">
-                  Anual: ${(respuesta * 12).toLocaleString()} · 10 años: ${(respuesta * 12 * 10).toLocaleString()} (uso interno)
+                  Anual: {formatCurrency(respuesta * 12, orgCurrency)} · 10 años: {formatCurrency(respuesta * 12 * 10, orgCurrency)} (uso interno)
                 </p>
               )}
               {pregunta.permiteOmitir && (
@@ -997,7 +997,7 @@ export default function RoyalSalesAIDemo() {
               onFreeTextChange={(v) => setCompraData({ ...compraData, producto: v })}
             />
           </div>
-          <Campo label="Monto aproximado" value={compraData.monto} onChange={(v) => setCompraData({ ...compraData, monto: v })} placeholder="$1,850" />
+          <Campo label="Monto aproximado (COP)" value={compraData.monto} onChange={(v) => setCompraData({ ...compraData, monto: v })} placeholder="$ 1.500.000" />
         </div>
         <div className="px-5 pb-8">
           <Boton variant="gold" onClick={registrarCompra} disabled={procesando}>

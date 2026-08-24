@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     if (type === "loyalty") {
       // El plan y los flags de contenido llegan YA decididos desde el cliente
       // (a partir de Firestore/clasificador). La IA solo redacta obedeciéndolos.
-      const plan = Array.isArray(body.plan) && body.plan.length
+      const plan: { dia: number; contentType: string }[] = Array.isArray(body.plan) && body.plan.length
         ? body.plan.filter((p: any) => Number.isFinite(Number(p?.dia)) && typeof p?.contentType === "string")
             .map((p: any) => ({ dia: Number(p.dia), contentType: String(p.contentType) }))
         : [1, 3, 7, 15, 30, 45, 60].map((d) => ({ dia: d, contentType: "usage_tip" }));
