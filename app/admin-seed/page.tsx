@@ -1,36 +1,48 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 
-// Pantalla de un solo uso: crea los documentos de Firestore para Andrés
-// (distributor) y para florestomas323@gmail.com (reviewer). No requiere haber
-// iniciado sesión en la app — la protección es el secreto, no Firebase Auth.
-// Después de usarla una vez, puedes borrar SEED_ADMIN_SECRET de Vercel para
-// desactivarla por completo.
+// Pantalla de configuración inicial. Se ejecuta una sola vez para crear los
+// perfiles de Firestore de los usuarios que ya existen en Firebase Authentication.
+// La protección es el secreto de servidor, no la sesión.
 export default function AdminSeedPage() {
   const [secreto, setSecreto] = useState("");
   const [cargando, setCargando] = useState(false);
-  const [resultado, setResultado] = useState<any>(null);
+  const [listo, setListo] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function ejecutar() {
+    if (cargando) return; // evita doble envío
     setCargando(true);
     setError(null);
-    setResultado(null);
+    setListo(false);
+
     try {
-      const res = await fetch("/api/admin/seed-users", {
+      const response = await fetch("/api/admin/seed-users", {
         method: "POST",
-        headers: { "x-seed-secret": secreto },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret: secreto.trim() }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Ocurrió un error.");
-      } else {
-        setResultado(data);
+
+      // Si el servidor devolviera HTML (por ejemplo una página de error), este
+      // parse fallaría — lo capturamos para dar un mensaje entendible.
+      let data: any = null;
+      try {
+        data = await response.json();
+      } catch {
+        setError("El servidor respondió de forma inesperada. Revisa los logs en Vercel.");
+        return;
       }
-    } catch (e: any) {
-      setError(e.message || "Error de red.");
+
+      if (!response.ok || !data?.ok) {
+        setError(data?.error || "No pudimos completar la configuración inicial.");
+        return;
+      }
+
+      setListo(true);
+    } catch {
+      setError("No pudimos conectar con el servidor. Revisa tu conexión.");
     } finally {
       setCargando(false);
     }
@@ -41,31 +53,56 @@ export default function AdminSeedPage() {
       <div className="w-full max-w-sm bg-white rounded-2xl p-6">
         <h1 className="font-bold text-green-950 mb-1">Configuración inicial</h1>
         <p className="text-xs text-gray-500 mb-4">
-          Crea los perfiles de Andrés Characo (distribuidor) y de la cuenta de revisión. Solo necesitas hacerlo una vez.
+          Crea los perfiles del distribuidor y de la cuenta de revisión. Solo necesitas hacerlo una vez.
         </p>
-        <label className="text-xs font-semibold text-gray-500 mb-1 block">Secreto (SEED_ADMIN_SECRET)</label>
-        <input
-          type="password"
-          value={secreto}
-          onChange={(e) => setSecreto(e.target.value)}
-          className="w-full border-2 border-gray-100 rounded-xl p-3 mb-3 focus:border-green-800 focus:outline-none"
-          placeholder="Pégalo aquí"
-        />
-        <button
-          onClick={ejecutar}
-          disabled={!secreto || cargando}
-          className="w-full py-3 rounded-xl bg-green-800 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {cargando ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Crear perfiles
-        </button>
 
-        {error && <p className="text-sm text-red-600 mt-4">{error}</p>}
-        {resultado && (
-          <div className="mt-4 text-sm text-green-800 bg-green-50 border border-green-100 rounded-xl p-3">
-            <p className="font-semibold mb-1">Listo.</p>
-            <p>Distribuidor: {resultado.distributor?.uid}</p>
-            <p>Reviewer: {resultado.reviewer?.uid}</p>
+        {listo ? (
+          <div className="text-center">
+            <CheckCircle2 className="w-10 h-10 text-green-600 mx-auto mb-3" />
+            <p className="font-semibold text-green-950 mb-1">Configuración inicial completada correctamente.</p>
+            <p className="text-xs text-gray-500 mb-5">Ya puedes iniciar sesión con cualquiera de las dos cuentas.</p>
+            <a
+              href="/login"
+              className="block w-full py-3 rounded-xl bg-green-800 text-white font-semibold"
+            >
+              Ir al inicio de sesión
+            </a>
           </div>
+        ) : (
+          <>
+            <label htmlFor="secreto" className="text-xs font-semibold text-gray-500 mb-1 block">
+              Secreto (SEED_ADMIN_SECRET)
+            </label>
+            <input
+              id="secreto"
+              type="password"
+              value={secreto}
+              onChange={(e) => setSecreto(e.target.value)}
+              disabled={cargando}
+              className="w-full border-2 border-gray-100 rounded-xl p-3 mb-3 text-base focus:border-green-800 focus:outline-none disabled:bg-gray-50"
+              placeholder="Pégalo aquí"
+            />
+            <button
+              onClick={ejecutar}
+              disabled={!secreto.trim() || cargando}
+              className="w-full py-3 rounded-xl bg-green-800 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {cargando ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Creando perfiles…
+                </>
+              ) : (
+                "Crear perfiles"
+              )}
+            </button>
+
+            {error && (
+              <div className="mt-4 flex gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
