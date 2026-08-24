@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
 
   const secret = String(body?.secret || "").trim();
   const expectedSecret = process.env.SEED_ADMIN_SECRET?.trim();
+  const soloDiagnostico = body?.diagnose === true;
 
   // --- 2. Validar el secreto (casos 1 y 2) ---
   if (!expectedSecret) {
@@ -110,6 +111,37 @@ export async function POST(req: NextRequest) {
       `Firebase Admin no pudo inicializarse. ${err?.message || "Revisa FIREBASE_SERVICE_ACCOUNT_JSON en Vercel."}`,
       500
     );
+  }
+
+  // --- 3b. Modo diagnóstico: reporta el estado y termina sin escribir nada ---
+  if (soloDiagnostico) {
+    const reporte: Record<string, unknown> = { credencialesValidas: true };
+    try {
+      const { parseServiceAccount } = await import("@/lib/firebase/admin");
+      const parsed = parseServiceAccount(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+      if (parsed.ok) {
+        reporte.projectId = parsed.account.project_id;
+        reporte.clientEmail = parsed.account.client_email;
+      }
+    } catch { /* ya validado arriba */ }
+
+    for (const [etiqueta, email] of [["distribuidor", DISTRIBUTOR_EMAIL], ["reviewer", REVIEWER_EMAIL]] as const) {
+      try {
+        const u = await adminAuth.getUserByEmail(email);
+        reporte[etiqueta] = `existe (uid ${u.uid.slice(0, 6)}…)`;
+      } catch {
+        reporte[etiqueta] = `NO existe en Firebase Authentication (${email})`;
+      }
+    }
+
+    try {
+      await adminDb.collection("organizations").limit(1).get();
+      reporte.firestore = "OK";
+    } catch (err: any) {
+      reporte.firestore = `FALLÓ: ${err?.message}`;
+    }
+
+    return NextResponse.json({ ok: true, diagnostico: reporte });
   }
 
   // --- 4. Buscar los usuarios en Firebase Authentication (casos 4 y 5) ---
