@@ -134,11 +134,13 @@ const COLOR_ESTADO = {
 };
 
 export default function RoyalSalesAIDemo() {
-  const { user, profile } = useAuth();
+  const { user, profile, signOut } = useAuth();
   const ctx = { uid: user?.uid, profile };
 
   const [screen, setScreen] = useState("dashboard");
   const [toast, setToast] = useState(null);
+  const [busquedaCliente, setBusquedaCliente] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("todos");
   const [prospecto, setProspecto] = useState(PROSPECTO_VACIO);
   const [duplicado, setDuplicado] = useState(null);
   const [customerId, setCustomerId] = useState(null);
@@ -480,16 +482,16 @@ export default function RoyalSalesAIDemo() {
   // ============================================================ PANTALLAS
 
   const Toast = toast ? (
-    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 bg-green-950 text-white text-sm px-4 py-2 rounded-full shadow-lg">
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-brand-deep text-white text-sm font-medium px-4 py-2.5 rounded-full shadow-nav animate-rise">
       {toast}
     </div>
   ) : null;
 
   const IndicadorGuardado = visitId ? (
-    <span className="flex items-center gap-1 text-[11px] font-medium text-gray-400">
+    <span className="flex items-center gap-1 text-[11px] font-medium text-muted">
       {guardando === "saving" ? <><CloudUpload className="w-3.5 h-3.5" /> Guardando…</> :
-        guardando === "offline" ? <><Cloud className="w-3.5 h-3.5 text-orange-500" /> Pendiente de sincronizar</> :
-          <><Check className="w-3.5 h-3.5 text-green-600" /> Guardado</>}
+        guardando === "offline" ? <><Cloud className="w-3.5 h-3.5 text-accent" /> Pendiente</> :
+          <><Check className="w-3.5 h-3.5 text-brand" /> Guardado</>}
     </span>
   ) : null;
 
@@ -499,63 +501,73 @@ export default function RoyalSalesAIDemo() {
       const d = tsToDate(f.scheduledAt);
       return d && d <= new Date(new Date().setHours(23, 59, 59, 999));
     });
+    const abrirNuevaVisita = () => { limpiarFlujo(); setScreen("nuevaVisita"); };
     return (
-      <Shell active="dashboard" setScreen={setScreen}>
+      <Shell active="dashboard" setScreen={setScreen} onNueva={abrirNuevaVisita}>
         {Toast}
-        <div className="px-5 pt-6 pb-2">
-          <p className="text-green-300 text-sm">Hola,</p>
-          <h1 className="text-2xl font-bold text-white">{profile?.firstName || "Bienvenido"}</h1>
+        <div className="bg-brand-deep rounded-b-[2rem] px-5 pt-7 pb-8">
+          <p className="text-emerald-300/80 text-sm">Hola,</p>
+          <h1 className="text-[26px] font-display font-bold text-white tracking-tight">{profile?.firstName || "Bienvenido"}</h1>
+          <div className="mt-5 grid grid-cols-3 gap-2.5">
+            <KpiCard icon={Home} valor={metricas?.visitasHoy ?? "—"} label="Visitas hoy" />
+            <KpiCard icon={TrendingUp} valor={metricas?.ventasHoy ?? "—"} label="Ventas hoy" />
+            <KpiCard icon={CalendarClock} valor={seguimientosHoy.length} label="Seguim. hoy" />
+          </div>
         </div>
-        <div className="px-5 -mt-1 grid grid-cols-3 gap-2 mb-5">
-          {[[metricas?.visitasHoy ?? "—", "Visitas hoy"], [metricas?.ventasHoy ?? "—", "Ventas hoy"], [seguimientosHoy.length, "Seguim. hoy"]].map(([n, l]) => (
-            <div key={l} className="bg-white/10 rounded-xl py-3 text-center">
-              <p className="text-white font-bold text-lg">{n}</p>
-              <p className="text-green-200 text-[10px]">{l}</p>
-            </div>
-          ))}
-        </div>
-        <div className="bg-gray-50 rounded-t-[2rem] flex-1 px-5 pt-6 pb-24">
+
+        <div className="flex-1 px-5 pt-5 pb-28 space-y-5">
           {visitaEnProgreso && (
             <button onClick={() => continuarVisita(visitaEnProgreso)}
-              className="w-full mb-4 p-4 rounded-2xl bg-orange-50 border-2 border-orange-200 flex items-center gap-3 text-left">
-              <PlayCircle className="w-6 h-6 text-orange-600 shrink-0" />
-              <div className="flex-1">
-                <p className="font-bold text-orange-800 text-sm">Visita en progreso</p>
-                <p className="text-xs text-orange-700">Toca para continuar donde quedaste</p>
+              className="w-full p-4 rounded-2xl bg-accent-soft border border-accent/25 flex items-center gap-3 text-left shadow-soft active:scale-[0.99] transition">
+              <span className="w-11 h-11 rounded-xl bg-accent/15 grid place-items-center shrink-0">
+                <PlayCircle className="w-6 h-6 text-accent" />
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="font-display font-bold text-accent text-sm">Visita en progreso</p>
+                <p className="text-xs text-accent/80">Toca para continuar donde quedaste</p>
               </div>
-              <ChevronRight className="w-4 h-4 text-orange-600" />
+              <ChevronRight className="w-5 h-5 text-accent shrink-0" />
             </button>
           )}
-          <Boton variant="gold" onClick={() => { limpiarFlujo(); setScreen("nuevaVisita"); }} className="mb-6">
-            <Plus className="w-5 h-5" /> Nueva visita
+
+          <Boton variant="gold" onClick={abrirNuevaVisita}>
+            <Plus className="w-5 h-5" strokeWidth={2.6} /> Nueva visita
           </Boton>
-          <p className="font-bold text-green-950 mb-3">Seguimientos de hoy</p>
-          {followups === null ? (
-            <SkeletonLista />
-          ) : seguimientosHoy.length === 0 ? (
-            <div className="bg-white rounded-xl p-5 border border-gray-100 text-center mb-6">
-              <p className="text-sm text-gray-500 mb-2">Todavía no tienes seguimientos para hoy.</p>
-              <button onClick={() => setScreen("seguimientos")} className="text-sm font-semibold text-green-800">Ver próximos</button>
+
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-display font-bold text-brand-deep text-[17px]">Seguimientos de hoy</h2>
+              {seguimientosHoy.length > 0 && (
+                <button onClick={() => setScreen("seguimientos")} className="text-[13px] font-semibold text-brand-dark">Ver todos</button>
+              )}
             </div>
-          ) : (
-            <div className="space-y-2 mb-6">
-              {seguimientosHoy.slice(0, 5).map((s) => {
-                const c = clientePorId(s.customerId);
-                return (
-                  <div key={s.id} className="bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-800 font-semibold text-sm">
-                      {(c?.firstName || "?")[0]}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm text-gray-900 truncate">{c ? `${c.firstName} ${c.lastName || ""}` : "Cliente"}</p>
-                      <p className="text-xs text-gray-500 truncate">{s.objective || s.type}</p>
-                    </div>
-                    <Badge className="text-orange-700 bg-orange-50 border-orange-200">{fmtDia(tsToDate(s.scheduledAt))}</Badge>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+            {followups === null ? (
+              <SkeletonLista />
+            ) : seguimientosHoy.length === 0 ? (
+              <EmptyState
+                icon={CalendarClock}
+                titulo="Sin seguimientos para hoy"
+                texto="Cuando programes un seguimiento, aparecerá aquí para que no se te escape."
+                action={<Boton variant="secondary" onClick={() => setScreen("seguimientos")}>Ver próximos</Boton>}
+              />
+            ) : (
+              <div className="space-y-2.5">
+                {seguimientosHoy.slice(0, 5).map((s) => {
+                  const c = clientePorId(s.customerId);
+                  return (
+                    <Card key={s.id} className="p-3.5 flex items-center gap-3">
+                      <Avatar name={c?.firstName} className="w-11 h-11 text-base" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-display font-semibold text-[15px] text-brand-deep truncate">{c ? `${c.firstName} ${c.lastName || ""}` : "Cliente"}</p>
+                        <p className="text-[13px] text-muted truncate">{s.objective || s.type}</p>
+                      </div>
+                      <Badge className="text-accent bg-accent-soft border-accent/15">{fmtDia(tsToDate(s.scheduledAt))}</Badge>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </Shell>
     );
@@ -990,27 +1002,75 @@ export default function RoyalSalesAIDemo() {
 
   // ---------- CLIENTES ----------
   if (screen === "clientes") {
+    const abrirNuevaVisita = () => { limpiarFlujo(); setScreen("nuevaVisita"); };
+    const q = busquedaCliente.trim().toLowerCase();
+    const lista = (clientes || []).filter((c) => {
+      const coincideEstado = filtroEstado === "todos" || (c.status || "new") === filtroEstado;
+      const nombre = `${c.firstName || ""} ${c.lastName || ""} ${c.phone || ""}`.toLowerCase();
+      return coincideEstado && (!q || nombre.includes(q));
+    });
+    const chips = [
+      ["todos", "Todos"],
+      ["new", ETIQUETA_ESTADO.new || "Nuevo"],
+      ["customer", ETIQUETA_ESTADO.customer || "Cliente"],
+      ["pending", ETIQUETA_ESTADO.pending || "Pendiente"],
+    ];
     return (
-      <Shell active="clientes" setScreen={setScreen}>
+      <Shell active="clientes" setScreen={setScreen} onNueva={abrirNuevaVisita}>
         {Toast}
-        <TopBar title="Clientes" />
-        <div className="px-5 space-y-2 pb-24">
+        <TopBar title="Clientes" subtitle={clientes ? `${clientes.length} en total` : undefined} />
+
+        {clientes && clientes.length > 0 && (
+          <div className="px-5 pb-3 space-y-3">
+            <div className="flex items-center gap-2.5 bg-card border border-hairline rounded-2xl px-4 h-12 shadow-soft focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/10 transition">
+              <Search className="w-[18px] h-[18px] text-muted/60 shrink-0" />
+              <input
+                value={busquedaCliente}
+                onChange={(e) => setBusquedaCliente(e.target.value)}
+                placeholder="Buscar por nombre o teléfono"
+                className="flex-1 bg-transparent outline-none text-[15px] text-ink placeholder:text-muted/45"
+              />
+              {busquedaCliente && (
+                <button onClick={() => setBusquedaCliente("")} aria-label="Limpiar búsqueda" className="text-muted/60">
+                  <XCircle className="w-[18px] h-[18px]" />
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
+              {chips.map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => setFiltroEstado(id)}
+                  className={`shrink-0 px-3.5 h-9 rounded-full text-[13px] font-medium border transition ${
+                    filtroEstado === id ? "bg-brand-dark text-white border-brand-dark" : "bg-card text-muted border-hairline"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="px-5 space-y-2.5 pb-28">
           {clientes === null ? (
             <SkeletonLista />
           ) : clientes.length === 0 ? (
-            <div className="bg-white rounded-xl p-6 border border-gray-100 text-center">
-              <p className="text-sm text-gray-500 mb-3">Aún no tienes clientes.</p>
-              <button onClick={() => { limpiarFlujo(); setScreen("nuevaVisita"); }} className="text-sm font-semibold text-green-800">Crear primera visita</button>
-            </div>
-          ) : clientes.map((c) => (
+            <EmptyState
+              icon={Users}
+              titulo="Aún no tienes clientes"
+              texto="Registra tu primera visita y el cliente aparecerá aquí automáticamente."
+              action={<Boton variant="gold" onClick={abrirNuevaVisita}><Plus className="w-5 h-5" /> Crear primera visita</Boton>}
+            />
+          ) : lista.length === 0 ? (
+            <EmptyState icon={Search} titulo="Sin resultados" texto="Prueba con otro nombre, teléfono o cambia el filtro de estado." />
+          ) : lista.map((c) => (
             <button key={c.id} onClick={() => abrirFicha(c)}
-              className="w-full bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-3 text-left">
-              <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-800 font-semibold text-sm shrink-0">
-                {(c.firstName || "?")[0]}
-              </div>
+              className="w-full bg-card rounded-2xl p-3.5 border border-hairline shadow-card flex items-center gap-3 text-left active:scale-[0.99] transition">
+              <Avatar name={c.firstName} className="w-11 h-11 text-base" />
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm text-gray-900 truncate">{c.firstName} {c.lastName || ""}</p>
-                <p className="text-xs text-gray-500 truncate">{c.phone}{c.familySize ? ` · ${c.familySize} integrantes` : ""}</p>
+                <p className="font-display font-semibold text-[15px] text-brand-deep truncate">{c.firstName} {c.lastName || ""}</p>
+                <p className="text-[13px] text-muted truncate">{c.phone}{c.familySize ? ` · ${c.familySize} integrantes` : ""}</p>
               </div>
               <Badge className={COLOR_ESTADO[c.status] || COLOR_ESTADO.new}>{ETIQUETA_ESTADO[c.status] || "Nuevo"}</Badge>
             </button>
@@ -1066,38 +1126,39 @@ export default function RoyalSalesAIDemo() {
   if (screen === "seguimientos") {
     const ahora = new Date();
     return (
-      <Shell active="seguimientos" setScreen={setScreen}>
+      <Shell active="seguimientos" setScreen={setScreen} onNueva={() => { limpiarFlujo(); setScreen("nuevaVisita"); }}>
         {Toast}
-        <TopBar title="Seguimientos" />
-        <div className="px-5 space-y-2 pb-24">
+        <TopBar title="Seguimientos" subtitle={followups && followups.length > 0 ? `${followups.length} pendientes` : undefined} />
+        <div className="px-5 space-y-2.5 pb-28">
           {followups === null ? (
             <SkeletonLista />
           ) : followups.length === 0 ? (
-            <div className="bg-white rounded-xl p-6 border border-gray-100 text-center">
-              <p className="text-sm text-gray-500">No tienes seguimientos pendientes. 🎉</p>
-            </div>
+            <EmptyState icon={CheckCircle2} titulo="Todo al día" texto="No tienes seguimientos pendientes. Cuando programes uno, aparecerá aquí." />
           ) : followups.map((s) => {
             const c = clientePorId(s.customerId);
             const fecha = tsToDate(s.scheduledAt);
             const vencido = fecha && fecha < ahora && fecha.toDateString() !== ahora.toDateString();
             const wa = c?.phone ? `https://wa.me/${toWhatsAppNumber(c.phone)}?text=${encodeURIComponent((s.suggestedMessage || "").replace("{nombre}", c?.firstName || ""))}` : null;
             return (
-              <div key={s.id} className="bg-white rounded-xl p-4 border border-gray-100">
-                <div className="flex items-center justify-between mb-1">
-                  <p className="font-semibold text-sm text-gray-900">{c ? `${c.firstName} ${c.lastName || ""}` : "Cliente"}</p>
-                  <Badge className={vencido ? "text-red-700 bg-red-50 border-red-200" : "text-orange-700 bg-orange-50 border-orange-200"}>
+              <Card key={s.id} className="p-4">
+                <div className="flex items-center gap-3 mb-2">
+                  <Avatar name={c?.firstName} className="w-10 h-10 text-sm" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-display font-semibold text-[15px] text-brand-deep truncate">{c ? `${c.firstName} ${c.lastName || ""}` : "Cliente"}</p>
+                    <p className="text-[13px] text-muted truncate">{s.objective || s.type}{s.reason ? ` · ${s.reason}` : ""}</p>
+                  </div>
+                  <Badge className={vencido ? "text-danger bg-red-50 border-red-100" : "text-accent bg-accent-soft border-accent/15"}>
                     {fmtDia(fecha)}
                   </Badge>
                 </div>
-                <p className="text-xs text-gray-500 mb-2">{s.objective || s.type}{s.reason ? ` · ${s.reason}` : ""}</p>
-                {s.suggestedMessage && <p className="text-xs text-gray-700 mb-3 line-clamp-2">{s.suggestedMessage}</p>}
+                {s.suggestedMessage && <p className="text-[13px] text-ink/75 mb-3 line-clamp-2 bg-surface rounded-xl px-3 py-2 border border-hairline">{s.suggestedMessage}</p>}
                 {waLogFollowup === s.id ? (
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 mb-2">¿Qué ocurrió?</p>
-                    <div className="flex flex-wrap gap-1.5">
+                    <p className="text-[13px] font-semibold text-muted mb-2">¿Qué ocurrió?</p>
+                    <div className="flex flex-wrap gap-2">
                       {["Mensaje enviado", "Respondió", "No respondió", "Reagendar", "Compró", "No interesado"].map((a) => (
                         <button key={a} onClick={() => registrarInteraccion(s, a)}
-                          className="px-3 py-1.5 rounded-full bg-green-50 border border-green-200 text-xs font-medium text-green-800">
+                          className="px-3.5 py-2 rounded-full bg-brand/[0.06] border border-brand/15 text-[13px] font-medium text-brand-dark active:bg-brand/10 transition min-h-[40px]">
                           {a}
                         </button>
                       ))}
@@ -1106,24 +1167,72 @@ export default function RoyalSalesAIDemo() {
                 ) : (
                   <div className="flex gap-2">
                     <button onClick={() => { navigator.clipboard?.writeText(s.suggestedMessage || ""); mostrarToast("Mensaje copiado"); }}
-                      className="flex-1 py-2 rounded-lg bg-gray-100 text-xs font-semibold text-gray-700 flex items-center justify-center gap-1">
-                      <Copy className="w-3 h-3" /> Copiar
+                      className="flex-1 min-h-[44px] rounded-xl bg-brand/[0.06] text-[13px] font-semibold text-brand-dark flex items-center justify-center gap-1.5">
+                      <Copy className="w-4 h-4" /> Copiar
                     </button>
                     {wa && (
                       <a href={wa} target="_blank" rel="noreferrer" onClick={() => setWaLogFollowup(s.id)}
-                        className="flex-1 py-2 rounded-lg bg-orange-500 text-xs font-semibold text-green-950 flex items-center justify-center gap-1">
-                        <MessageCircle className="w-3 h-3" /> WhatsApp
+                        className="flex-1 min-h-[44px] rounded-xl bg-accent text-[13px] font-semibold text-white flex items-center justify-center gap-1.5 shadow-cta">
+                        <MessageCircle className="w-4 h-4" /> WhatsApp
                       </a>
                     )}
                     <button onClick={async () => { await completeFollowup(ctx, s.id); mostrarToast("Seguimiento completado"); }}
-                      className="flex-1 py-2 rounded-lg bg-green-800 text-xs font-semibold text-white flex items-center justify-center gap-1">
-                      <Check className="w-3 h-3" /> Hecho
+                      className="flex-1 min-h-[44px] rounded-xl bg-brand-dark text-[13px] font-semibold text-white flex items-center justify-center gap-1.5">
+                      <Check className="w-4 h-4" /> Hecho
                     </button>
                   </div>
                 )}
-              </div>
+              </Card>
             );
           })}
+        </div>
+      </Shell>
+    );
+  }
+
+  // ---------- MÁS ----------
+  if (screen === "mas") {
+    const nombre = [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || "Vendedor";
+    const rol = profile?.role === "reviewer" ? "Cuenta de revisión" : profile?.role === "distributor" || profile?.role === "manager" ? "Distribuidor" : "Vendedor";
+    const filas = [
+      { icon: User, label: "Nombre", valor: nombre },
+      { icon: MessageCircle, label: "Correo", valor: user?.email || "—" },
+      { icon: Building2, label: "Rol", valor: rol },
+    ];
+    return (
+      <Shell active="mas" setScreen={setScreen} onNueva={() => { limpiarFlujo(); setScreen("nuevaVisita"); }}>
+        {Toast}
+        <TopBar title="Más" />
+        <div className="px-5 pb-28 space-y-5">
+          <Card className="p-5 flex items-center gap-4">
+            <Avatar name={profile?.firstName} className="w-14 h-14 text-xl" />
+            <div className="min-w-0">
+              <p className="font-display font-bold text-brand-deep text-lg truncate">{nombre}</p>
+              <p className="text-[13px] text-muted truncate">{rol}</p>
+            </div>
+          </Card>
+
+          <div>
+            <p className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2 px-1">Tu cuenta</p>
+            <Card className="divide-y divide-hairline overflow-hidden">
+              {filas.map(({ icon: Icon, label, valor }) => (
+                <div key={label} className="flex items-center gap-3 px-4 py-3.5">
+                  <span className="w-9 h-9 rounded-xl bg-brand/[0.06] grid place-items-center shrink-0">
+                    <Icon className="w-[18px] h-[18px] text-brand" strokeWidth={1.9} />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] text-muted">{label}</p>
+                    <p className="text-[15px] text-brand-deep font-medium truncate">{valor}</p>
+                  </div>
+                </div>
+              ))}
+            </Card>
+          </div>
+
+          <Boton variant="danger" onClick={signOut}>
+            <LogOut className="w-[18px] h-[18px]" /> Cerrar sesión
+          </Boton>
+          <p className="text-center text-xs text-muted/70">Royal Sales AI · v1.0</p>
         </div>
       </Shell>
     );
