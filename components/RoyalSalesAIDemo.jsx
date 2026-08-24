@@ -196,6 +196,9 @@ export default function RoyalSalesAIDemo() {
   const [completandoServicio, setCompletandoServicio] = useState(false);
   const [perfilAbierto, setPerfilAbierto] = useState(false); // hoja de perfil/cerrar sesión
 
+  // Fase C: contenido oficial por producto (biblioteca del distribuidor).
+  const [contenidoProd, setContenidoProd] = useState([]);
+
   const draftTimer = useRef(null);
 
   function mostrarToast(msg) {
@@ -224,6 +227,9 @@ export default function RoyalSalesAIDemo() {
     const un2 = subscribeFollowups(ctx, setFollowups, () => setFollowups([]));
     const un3 = subscribeProducts(ctx, setProductos, () => setProductos([]));
     const un4 = subscribePostSaleServices(ctx, setServicios, () => setServicios([]));
+    // Biblioteca de contenido: solo el distribuidor/reviewer necesita el stream.
+    const esGestor = profile?.role === "distributor" || profile?.role === "reviewer";
+    const un5 = esGestor ? subscribeProductContent(ctx, setContenidoProd, () => setContenidoProd([])) : null;
     // Sembrar catálogo real una sola vez (idempotente); al terminar, asegurar
     // que todos los productos tengan flags de contenido (supportsRecipes, etc.).
     seedCatalogIfEmpty(ctx)
@@ -234,7 +240,7 @@ export default function RoyalSalesAIDemo() {
     // 2) quitar recetas de planes de clientes sin productos culinarios.
     repairFollowupsForDeletedCustomers(ctx).catch((e) => console.log("[v0] repair followups:", e?.message));
     repairLoyaltyContentForNonCookingCustomers(ctx).catch((e) => console.log("[v0] repair recetas:", e?.message));
-    return () => { un1(); un2(); un3(); un4(); };
+    return () => { un1(); un2(); un3(); un4(); un5 && un5(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.organizationId]);
 
@@ -298,6 +304,65 @@ export default function RoyalSalesAIDemo() {
     } finally {
       setCompletandoServicio(false);
     }
+  }
+
+  // ---------- Fase C: biblioteca de contenido ----------
+  // Genera borradores con IA respetando las capacidades del producto y los
+  // guarda como draft. El distribuidor luego aprueba/rechaza/edita.
+  async function generarContenidoHandler(producto) {
+    const caps = capabilitiesFor(producto);
+    const items = await llamarIA(auth, {
+      type: "productContentDraft",
+      productName: producto.name,
+      productCategory: producto.category || "",
+      supportsRecipes: caps.supportsRecipes === true,
+      allowedContentTypes: allowedContentTypes(caps),
+      currency: orgCurrency.currency,
+      locale: orgCurrency.locale,
+    });
+    const lista = Array.isArray(items?.items) ? items.items : [];
+    if (!lista.length) throw new Error("La IA no generó contenido.");
+    for (const it of lista) {
+      await createProductContent(ctx, {
+        productId: producto.id,
+        productName: producto.name,
+        type: it.type,
+        title: it.title,
+        content: it.content,
+        status: "draft",
+        source: "ai",
+      });
+    }
+    mostrarToast(`${lista.length} borrador${lista.length > 1 ? "es" : ""} generado${lista.length > 1 ? "s" : ""}.`);
+  }
+
+  async function aprobarContenidoHandler(id) {
+    await setProductContentStatus(ctx, id, "approved");
+    mostrarToast("Contenido aprobado. La IA ya puede usarlo.");
+  }
+  async function rechazarContenidoHandler(id) {
+    await setProductContentStatus(ctx, id, "rejected");
+    mostrarToast("Contenido rechazado.");
+  }
+  async function editarContenidoHandler(id, data) {
+    await updateProductContent(ctx, id, data);
+    mostrarToast("Contenido actualizado.");
+  }
+  async function eliminarContenidoHandler(id) {
+    await deleteProductContent(ctx, id);
+    mostrarToast("Contenido eliminado.");
+  }
+
+  // ---------- Fase C: asistente de producto ----------
+  // Responde SOLO con contenido aprobado; si no hay, la IA lo dice sin inventar.
+  async function preguntarAsistenteHandler(producto, question) {
+    const aprobado = await getApprovedProductContent(ctx, producto.id);
+    return llamarIA(auth, {
+      type: "productAssistant",
+      productName: producto.name,
+      question,
+      officialContent: aprobado.map((c) => ({ type: c.type, title: c.title, content: c.content })),
+    });
   }
 
   // ---------- visita en progreso + métricas ----------
@@ -712,13 +777,22 @@ export default function RoyalSalesAIDemo() {
               <p className="text-emerald-300/80 text-sm">Hola,</p>
               <h1 className="text-[26px] font-display font-bold text-white tracking-tight">{profile?.firstName || "Bienvenido"}</h1>
             </div>
-            <button
-              onClick={() => setPerfilAbierto(true)}
-              aria-label="Perfil y ajustes"
-              className="w-11 h-11 rounded-full bg-white/10 grid place-items-center active:bg-white/20 transition shrink-0"
-            >
-              <Avatar name={profile?.firstName} className="w-11 h-11 text-base" />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setScreen("asistente")}
+                aria-label="Asistente de producto"
+                className="w-11 h-11 rounded-full bg-white/10 grid place-items-center active:bg-white/20 transition"
+              >
+                <Bot className="w-5 h-5 text-white" strokeWidth={1.9} />
+              </button>
+              <button
+                onClick={() => setPerfilAbierto(true)}
+                aria-label="Perfil y ajustes"
+                className="w-11 h-11 rounded-full bg-white/10 grid place-items-center active:bg-white/20 transition"
+              >
+                <Avatar name={profile?.firstName} className="w-11 h-11 text-base" />
+              </button>
+            </div>
           </div>
           <div className="mt-5 grid grid-cols-3 gap-2.5">
             <KpiCard icon={Home} valor={metricas?.visitasHoy ?? "—"} label="Visitas hoy" />
@@ -787,6 +861,8 @@ export default function RoyalSalesAIDemo() {
             correo={user?.email || "—"}
             rol={profile?.role === "reviewer" ? "Cuenta de revisión" : (profile?.role === "distributor" || profile?.role === "manager") ? "Distribuidor" : "Vendedor"}
             firstName={profile?.firstName}
+            esManager={esManager}
+            onBiblioteca={() => { setPerfilAbierto(false); setScreen("biblioteca"); }}
             onCerrar={() => setPerfilAbierto(false)}
             onSignOut={signOut}
           />
@@ -1546,6 +1622,41 @@ export default function RoyalSalesAIDemo() {
     );
   }
 
+  // ---------- BIBLIOTECA DE CONTENIDO (Fase C · solo distribuidor) ----------
+  if (screen === "biblioteca") {
+    return (
+      <ScreenWrap>
+        {Toast}
+        <TopBar title="Contenido oficial" subtitle="Aprueba lo que la IA puede usar" onBack={() => setScreen("dashboard")} />
+        <ContentLibrary
+          productos={productos}
+          contenido={contenidoProd}
+          onGenerar={generarContenidoHandler}
+          onAprobar={aprobarContenidoHandler}
+          onRechazar={rechazarContenidoHandler}
+          onEditar={editarContenidoHandler}
+          onEliminar={eliminarContenidoHandler}
+          onToast={mostrarToast}
+        />
+      </ScreenWrap>
+    );
+  }
+
+  // ---------- ASISTENTE DE PRODUCTO (Fase C · todos) ----------
+  if (screen === "asistente") {
+    return (
+      <ScreenWrap>
+        {Toast}
+        <TopBar title="Asistente de producto" subtitle="Respuestas basadas en contenido oficial" onBack={() => setScreen("dashboard")} />
+        <ProductAssistant
+          productos={productos}
+          onPreguntar={preguntarAsistenteHandler}
+          onToast={mostrarToast}
+        />
+      </ScreenWrap>
+    );
+  }
+
   return null;
 }
 
@@ -1564,7 +1675,7 @@ function ScreenWrap({ children }) {
 
 // Hoja de perfil (antes vivía en la pestaña "Más"). Muestra los datos de la
 // cuenta y el botón de cerrar sesión, sin ocupar un slot en la barra inferior.
-function PerfilSheet({ nombre, correo, rol, firstName, onCerrar, onSignOut }) {
+function PerfilSheet({ nombre, correo, rol, firstName, esManager, onBiblioteca, onCerrar, onSignOut }) {
   const filas = [
     { icon: User, label: "Nombre", valor: nombre },
     { icon: MessageCircle, label: "Correo", valor: correo },
@@ -1595,6 +1706,21 @@ function PerfilSheet({ nombre, correo, rol, firstName, onCerrar, onSignOut }) {
             </div>
           ))}
         </Card>
+        {esManager && (
+          <button
+            onClick={onBiblioteca}
+            className="w-full flex items-center gap-3 rounded-2xl bg-card border border-hairline px-4 py-3.5 mb-3 active:bg-surface transition"
+          >
+            <span className="w-9 h-9 rounded-xl bg-brand/[0.06] grid place-items-center shrink-0">
+              <BookOpen className="w-[18px] h-[18px] text-brand" strokeWidth={1.9} />
+            </span>
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-[15px] text-brand-deep font-medium">Contenido oficial</p>
+              <p className="text-[12px] text-muted">Generar, editar y aprobar contenido</p>
+            </div>
+            <ChevronRight className="w-4 h-4 text-muted/50 shrink-0" />
+          </button>
+        )}
         <Boton variant="danger" onClick={onSignOut}>
           <LogOut className="w-[18px] h-[18px]" /> Cerrar sesión
         </Boton>
