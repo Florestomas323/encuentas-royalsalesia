@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Home, Users, Calendar, Plus, ChevronRight, Loader2, MessageCircle, Copy, Check,
   ArrowLeft, Clock, AlertCircle, Sparkles, Search, CheckCircle2, XCircle, HelpCircle,
-  Eye, ListChecks, PlayCircle, CloudUpload, Cloud,
+  Eye, ListChecks, PlayCircle, CloudUpload, Cloud, Menu, User, Building2, Settings,
+  LogOut, TrendingUp, FlaskConical, CalendarClock, ClipboardList,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { auth } from "@/lib/firebase/client";
@@ -66,36 +67,44 @@ async function llamarIA(auth, payload) {
   return data.result;
 }
 
-function Boton({ children, onClick, variant = "primary", className = "", disabled }) {
-  const base = "w-full py-4 rounded-2xl font-semibold text-base flex items-center justify-center gap-2 transition active:scale-[0.98] disabled:opacity-50";
+function Boton({ children, onClick, variant = "primary", className = "", disabled, type }) {
+  const base = "w-full min-h-[52px] px-5 rounded-2xl font-display font-semibold text-[15px] flex items-center justify-center gap-2 transition-all duration-200 active:scale-[0.98] disabled:opacity-45 disabled:pointer-events-none";
   const variants = {
-    primary: "bg-green-800 text-white shadow-lg shadow-green-900/20",
-    gold: "bg-orange-500 text-green-950",
-    ghost: "bg-white text-green-800 border-2 border-green-100",
+    primary: "bg-brand-dark text-white shadow-card active:bg-brand-deep",
+    gold: "bg-accent text-white shadow-cta active:brightness-95",
+    accent: "bg-accent text-white shadow-cta active:brightness-95",
+    secondary: "bg-brand/10 text-brand-dark active:bg-brand/15",
+    ghost: "bg-card text-brand-dark border border-hairline shadow-soft active:bg-brand/5",
+    danger: "bg-card text-danger border border-red-100 active:bg-red-50",
   };
   return (
-    <button disabled={disabled} onClick={onClick} className={`${base} ${variants[variant]} ${className}`}>
+    <button type={type} disabled={disabled} onClick={onClick} className={`${base} ${variants[variant]} ${className}`}>
       {children}
     </button>
   );
 }
 
-function TopBar({ title, onBack, right }) {
+function TopBar({ title, onBack, right, subtitle }) {
   return (
-    <div className="flex items-center gap-3 px-5 pt-6 pb-4">
-      {onBack && (
-        <button onClick={onBack} aria-label="Volver" className="p-2 -ml-2 rounded-full active:bg-green-50">
-          <ArrowLeft className="w-5 h-5 text-green-900" />
-        </button>
-      )}
-      <h1 className="text-lg font-bold text-green-950 flex-1">{title}</h1>
-      {right}
-    </div>
+    <header className="sticky top-0 z-20 bg-card/85 backdrop-blur-md">
+      <div className="flex items-center gap-2 px-5 pt-5 pb-3">
+        {onBack && (
+          <button onClick={onBack} aria-label="Volver" className="grid place-items-center w-10 h-10 -ml-2 rounded-full text-brand-deep active:bg-brand/10">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+        )}
+        <div className="flex-1 min-w-0">
+          <h1 className="text-[19px] font-display font-bold text-brand-deep truncate leading-tight text-balance">{title}</h1>
+          {subtitle && <p className="text-xs text-muted truncate mt-0.5">{subtitle}</p>}
+        </div>
+        {right}
+      </div>
+    </header>
   );
 }
 
 function Badge({ children, className = "" }) {
-  return <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold border ${className}`}>{children}</span>;
+  return <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${className}`}>{children}</span>;
 }
 
 function fmtFecha(d) {
@@ -1123,52 +1132,120 @@ export default function RoyalSalesAIDemo() {
   return null;
 }
 
-function Shell({ children, active, setScreen }) {
+function Shell({ children, active, setScreen, onNueva }) {
   return (
-    <div className="min-h-screen bg-gray-50 max-w-md mx-auto flex flex-col">
-      <div className="bg-green-950 pb-2">{children}</div>
-      <NavInline active={active} setScreen={setScreen} />
+    <div className="min-h-screen bg-surface max-w-md mx-auto flex flex-col">
+      <div className="flex-1 flex flex-col">{children}</div>
+      <NavInline active={active} setScreen={setScreen} onNueva={onNueva} />
     </div>
   );
 }
 
 function ScreenWrap({ children }) {
-  return <div className="min-h-screen bg-white max-w-md mx-auto flex flex-col">{children}</div>;
+  return <div className="min-h-screen bg-surface max-w-md mx-auto flex flex-col">{children}</div>;
 }
 
-function NavInline({ active, setScreen }) {
-  const items = [
-    { id: "dashboard", label: "Inicio", icon: Home },
-    { id: "clientes", label: "Clientes", icon: Users },
-    { id: "seguimientos", label: "Seguim.", icon: Calendar },
-  ];
+function NavTab({ id, label, icon: Icon, active, setScreen }) {
+  const on = active === id;
   return (
-    <div className="fixed bottom-0 max-w-md w-full bg-white border-t border-gray-100 flex justify-around py-2">
-      {items.map(({ id, label, icon: Icon }) => (
-        <button key={id} onClick={() => setScreen(id)} aria-label={label} className="flex flex-col items-center gap-0.5 px-4 py-1">
-          <Icon className={`w-5 h-5 ${active === id ? "text-green-800" : "text-gray-400"}`} />
-          <span className={`text-[10px] font-medium ${active === id ? "text-green-800" : "text-gray-400"}`}>{label}</span>
+    <button
+      onClick={() => setScreen(id)}
+      aria-label={label}
+      aria-current={on ? "page" : undefined}
+      className="flex flex-col items-center gap-1 w-16 py-1 min-h-[44px]"
+    >
+      <Icon className={`w-[22px] h-[22px] transition-colors ${on ? "text-brand-dark" : "text-muted/55"}`} strokeWidth={on ? 2.4 : 1.9} />
+      <span className={`text-[10px] font-medium transition-colors ${on ? "text-brand-dark" : "text-muted/55"}`}>{label}</span>
+    </button>
+  );
+}
+
+function NavInline({ active, setScreen, onNueva }) {
+  return (
+    <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 max-w-md w-full bg-card border-t border-hairline shadow-nav z-30">
+      <div className="flex items-center justify-around px-2 pt-1.5 pb-1.5 safe-bottom">
+        <NavTab id="dashboard" label="Inicio" icon={Home} active={active} setScreen={setScreen} />
+        <NavTab id="clientes" label="Clientes" icon={Users} active={active} setScreen={setScreen} />
+        <button
+          onClick={onNueva}
+          aria-label="Nueva visita"
+          className="flex flex-col items-center -mt-7 w-16 min-h-[44px]"
+        >
+          <span className="w-14 h-14 rounded-2xl bg-accent text-white grid place-items-center shadow-cta active:scale-95 transition ring-4 ring-card">
+            <Plus className="w-6 h-6" strokeWidth={2.6} />
+          </span>
+          <span className="text-[10px] font-semibold text-brand-dark mt-1">Visita</span>
         </button>
-      ))}
+        <NavTab id="seguimientos" label="Seguim." icon={Calendar} active={active} setScreen={setScreen} />
+        <NavTab id="mas" label="Más" icon={Menu} active={active} setScreen={setScreen} />
+      </div>
+    </nav>
+  );
+}
+
+function Card({ children, className = "", ...rest }) {
+  return (
+    <div className={`bg-card rounded-2xl border border-hairline shadow-card ${className}`} {...rest}>
+      {children}
     </div>
   );
 }
 
-function Campo({ label, value, onChange, placeholder, type = "text" }) {
+function Avatar({ name, className = "" }) {
+  const letra = (name || "?").trim()[0]?.toUpperCase() || "?";
+  return (
+    <div className={`rounded-full bg-brand/10 text-brand-dark font-display font-bold grid place-items-center shrink-0 ${className}`}>
+      {letra}
+    </div>
+  );
+}
+
+function EmptyState({ icon: Icon, titulo, texto, action }) {
+  return (
+    <div className="bg-card rounded-2xl border border-hairline shadow-soft px-6 py-10 text-center flex flex-col items-center animate-rise">
+      {Icon && (
+        <div className="w-14 h-14 rounded-2xl bg-brand/8 grid place-items-center mb-4">
+          <Icon className="w-6 h-6 text-brand" strokeWidth={1.9} />
+        </div>
+      )}
+      <p className="font-display font-semibold text-brand-deep text-[15px]">{titulo}</p>
+      {texto && <p className="text-sm text-muted mt-1.5 max-w-[16rem] leading-relaxed">{texto}</p>}
+      {action && <div className="mt-5 w-full max-w-[16rem]">{action}</div>}
+    </div>
+  );
+}
+
+function KpiCard({ icon: Icon, valor, label }) {
+  return (
+    <div className="bg-white/[0.08] rounded-2xl p-3 border border-white/10 backdrop-blur-sm">
+      <Icon className="w-4 h-4 text-emerald-300/90 mb-2" strokeWidth={2} />
+      <p className="text-white font-display font-bold text-2xl leading-none tabular-nums">{valor}</p>
+      <p className="text-emerald-200/70 text-[11px] mt-1.5 font-medium">{label}</p>
+    </div>
+  );
+}
+
+function Campo({ label, value, onChange, placeholder, type = "text", hint }) {
   return (
     <div>
-      <label className="text-xs font-semibold text-gray-500 mb-1 block">{label}</label>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full border-2 border-gray-100 rounded-xl p-3.5 text-base text-gray-800 focus:border-green-800 focus:outline-none" />
+      <label className="text-[13px] font-medium text-muted mb-1.5 block">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-card border border-hairline rounded-2xl px-4 h-[52px] text-base text-ink placeholder:text-muted/45 shadow-soft focus:border-brand focus:ring-4 focus:ring-brand/10 focus:outline-none transition"
+      />
+      {hint && <p className="text-xs text-muted mt-1.5">{hint}</p>}
     </div>
   );
 }
 
 function MiniCard({ label, valor }) {
   return (
-    <div className="bg-white border border-gray-100 rounded-xl p-3">
-      <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">{label}</p>
-      <p className="text-sm font-bold text-green-950 capitalize">{valor || "—"}</p>
+    <div className="bg-card border border-hairline rounded-2xl p-3.5 shadow-soft">
+      <p className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-1">{label}</p>
+      <p className="text-sm font-display font-bold text-brand-deep capitalize">{valor || "—"}</p>
     </div>
   );
 }
@@ -1177,8 +1254,8 @@ function Seccion({ titulo, texto }) {
   if (!texto) return null;
   return (
     <div>
-      <p className="text-xs font-semibold text-gray-400 uppercase mb-1">{titulo}</p>
-      <p className="text-sm text-gray-800">{texto}</p>
+      <p className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-1.5">{titulo}</p>
+      <p className="text-[15px] text-ink leading-relaxed">{texto}</p>
     </div>
   );
 }
@@ -1186,15 +1263,15 @@ function Seccion({ titulo, texto }) {
 function ListaTarjetas({ titulo, items, color }) {
   if (!items || items.length === 0) return null;
   const colors = {
-    green: "bg-green-50 text-green-800 border-green-100",
-    red: "bg-red-50 text-red-800 border-red-100",
+    green: "bg-brand/[0.06] text-brand-dark border-brand/10",
+    red: "bg-red-50 text-red-700 border-red-100",
   };
   return (
     <div>
-      <p className="text-xs font-semibold text-gray-400 uppercase mb-2">{titulo}</p>
-      <div className="space-y-1.5">
+      <p className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2">{titulo}</p>
+      <div className="space-y-2">
         {items.map((it, i) => (
-          <div key={i} className={`text-sm px-3 py-2 rounded-lg border ${colors[color]}`}>{it}</div>
+          <div key={i} className={`text-[14px] leading-relaxed px-3.5 py-2.5 rounded-xl border ${colors[color]}`}>{it}</div>
         ))}
       </div>
     </div>
@@ -1203,11 +1280,14 @@ function ListaTarjetas({ titulo, items, color }) {
 
 function SkeletonLista() {
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="bg-white rounded-xl p-4 border border-gray-100 animate-pulse">
-          <div className="h-3.5 bg-gray-100 rounded w-1/2 mb-2" />
-          <div className="h-3 bg-gray-100 rounded w-3/4" />
+        <div key={i} className="bg-card rounded-2xl p-4 border border-hairline flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-hairline animate-pulse" />
+          <div className="flex-1 space-y-2">
+            <div className="h-3.5 bg-hairline rounded-full w-1/2 animate-pulse" />
+            <div className="h-3 bg-hairline rounded-full w-3/4 animate-pulse" />
+          </div>
         </div>
       ))}
     </div>

@@ -1,0 +1,18 @@
+{
+  "name": "Royal Sales AI",
+  "short_name": "Royal Sales",
+  "description": "Asistente comercial con IA para cada visita presencial.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#052e16",
+  "theme_color": "#052e16",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, LogOut, FlaskConical } from "lucide-react";
+import { Loader2, FlaskConical } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -20,7 +20,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // dashboard aparezca un instante antes de saber quién es el usuario.
   if (loading || !user) {
     return (
-      <div className="min-h-screen bg-green-950 flex items-center justify-center">
+      <div className="min-h-screen bg-brand-deep flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-white animate-spin" />
       </div>
     );
@@ -95,17 +95,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="max-w-md mx-auto">
+    <div className="max-w-md mx-auto bg-surface min-h-screen">
       {profile.role === "reviewer" && (
-        <div className="bg-orange-500 text-green-950 text-xs font-semibold px-4 py-1.5 flex items-center gap-1.5 justify-center">
-          <FlaskConical className="w-3.5 h-3.5" /> Modo revisión — estos datos no cuentan para estadísticas
+        <div className="flex items-center justify-center gap-2 bg-accent-soft border-b border-accent/15 px-4 py-2">
+          <FlaskConical className="w-3.5 h-3.5 text-accent shrink-0" />
+          <p className="text-[11.5px] leading-tight text-center">
+            <span className="font-semibold text-accent">Modo revisión</span>
+            <span className="text-muted"> — los datos aquí no cuentan para tus estadísticas.</span>
+          </p>
         </div>
       )}
-      <div className="flex justify-end px-4 py-1.5 bg-gray-50">
-        <button onClick={signOut} className="flex items-center gap-1 text-xs font-medium text-gray-500">
-          <LogOut className="w-3.5 h-3.5" /> Cerrar sesión
-        </button>
-      </div>
       {children}
     </div>
   );
