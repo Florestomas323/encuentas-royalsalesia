@@ -189,6 +189,7 @@ export default function RoyalSalesAIDemo() {
   const [servicios, setServicios] = useState(null);
   const [servicioAbierto, setServicioAbierto] = useState(null);
   const [completandoServicio, setCompletandoServicio] = useState(false);
+  const [perfilAbierto, setPerfilAbierto] = useState(false); // hoja de perfil/cerrar sesión
 
   const draftTimer = useRef(null);
 
@@ -691,8 +692,19 @@ export default function RoyalSalesAIDemo() {
       <Shell active="dashboard" setScreen={setScreen} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
         {Toast}
         <div className="bg-brand-deep rounded-b-[2rem] px-5 pt-7 pb-8">
-          <p className="text-emerald-300/80 text-sm">Hola,</p>
-          <h1 className="text-[26px] font-display font-bold text-white tracking-tight">{profile?.firstName || "Bienvenido"}</h1>
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-emerald-300/80 text-sm">Hola,</p>
+              <h1 className="text-[26px] font-display font-bold text-white tracking-tight">{profile?.firstName || "Bienvenido"}</h1>
+            </div>
+            <button
+              onClick={() => setPerfilAbierto(true)}
+              aria-label="Perfil y ajustes"
+              className="w-11 h-11 rounded-full bg-white/10 grid place-items-center active:bg-white/20 transition shrink-0"
+            >
+              <Avatar name={profile?.firstName} className="w-11 h-11 text-base" />
+            </button>
+          </div>
           <div className="mt-5 grid grid-cols-3 gap-2.5">
             <KpiCard icon={Home} valor={metricas?.visitasHoy ?? "—"} label="Visitas hoy" />
             <KpiCard icon={TrendingUp} valor={metricas?.ventasHoy ?? "—"} label="Ventas hoy" />
@@ -754,6 +766,16 @@ export default function RoyalSalesAIDemo() {
             )}
           </div>
         </div>
+        {perfilAbierto && (
+          <PerfilSheet
+            nombre={[profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || "Vendedor"}
+            correo={user?.email || "—"}
+            rol={profile?.role === "reviewer" ? "Cuenta de revisión" : (profile?.role === "distributor" || profile?.role === "manager") ? "Distribuidor" : "Vendedor"}
+            firstName={profile?.firstName}
+            onCerrar={() => setPerfilAbierto(false)}
+            onSignOut={signOut}
+          />
+        )}
       </Shell>
     );
   }
@@ -1301,6 +1323,18 @@ export default function RoyalSalesAIDemo() {
             <MiniCard label="Familia" valor={c.familySize ? `${c.familySize} integrantes` : "—"} />
             <MiniCard label="Creado" valor={fmtDia(tsToDate(c.createdAt))} />
           </div>
+          {clientesConServicio.has(c.id) && (
+            <button
+              onClick={() => setScreen("servicios")}
+              className="w-full flex items-center gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-left active:bg-amber-100 transition"
+            >
+              <Wrench className="w-4 h-4 text-amber-600 shrink-0" strokeWidth={2} />
+              <p className="text-[13px] text-amber-800 leading-snug flex-1">
+                Tiene un servicio postventa pendiente. El plan de fidelización se activará al completarlo.
+              </p>
+              <ChevronRight className="w-4 h-4 text-amber-600 shrink-0" />
+            </button>
+          )}
           <div>
             <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Historial</p>
             {fichaTimeline === null ? (
@@ -1375,7 +1409,7 @@ export default function RoyalSalesAIDemo() {
   if (screen === "seguimientos") {
     const ahora = new Date();
     return (
-      <Shell active="seguimientos" setScreen={setScreen} onNueva={() => { limpiarFlujo(); setScreen("nuevaVisita"); }}>
+      <Shell active="seguimientos" setScreen={setScreen} onNueva={() => { limpiarFlujo(); setScreen("nuevaVisita"); }} serviciosBadge={numServiciosPendientes}>
         {Toast}
         <TopBar title="Seguimientos" subtitle={Array.isArray(followupsVisibles) && followupsVisibles.length > 0 ? `${followupsVisibles.length} pendientes` : undefined} />
         <div className="px-5 space-y-2.5 pb-28">
@@ -1439,50 +1473,63 @@ export default function RoyalSalesAIDemo() {
     );
   }
 
-  // ---------- MÁS ----------
-  if (screen === "mas") {
-    const nombre = [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || "Vendedor";
-    const rol = profile?.role === "reviewer" ? "Cuenta de revisión" : profile?.role === "distributor" || profile?.role === "manager" ? "Distribuidor" : "Vendedor";
-    const filas = [
-      { icon: User, label: "Nombre", valor: nombre },
-      { icon: MessageCircle, label: "Correo", valor: user?.email || "—" },
-      { icon: Building2, label: "Rol", valor: rol },
-    ];
+  // ---------- SERVICIOS POSTVENTA (Fase B) ----------
+  if (screen === "servicios") {
     return (
-      <Shell active="mas" setScreen={setScreen} onNueva={() => { limpiarFlujo(); setScreen("nuevaVisita"); }}>
+      <Shell active="servicios" setScreen={setScreen} onNueva={() => { limpiarFlujo(); setScreen("nuevaVisita"); }} serviciosBadge={numServiciosPendientes}>
         {Toast}
-        <TopBar title="Más" />
-        <div className="px-5 pb-28 space-y-5">
-          <Card className="p-5 flex items-center gap-4">
-            <Avatar name={profile?.firstName} className="w-14 h-14 text-xl" />
-            <div className="min-w-0">
-              <p className="font-display font-bold text-brand-deep text-lg truncate">{nombre}</p>
-              <p className="text-[13px] text-muted truncate">{rol}</p>
-            </div>
-          </Card>
-
-          <div>
-            <p className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2 px-1">Tu cuenta</p>
-            <Card className="divide-y divide-hairline overflow-hidden">
-              {filas.map(({ icon: Icon, label, valor }) => (
-                <div key={label} className="flex items-center gap-3 px-4 py-3.5">
-                  <span className="w-9 h-9 rounded-xl bg-brand/[0.06] grid place-items-center shrink-0">
-                    <Icon className="w-[18px] h-[18px] text-brand" strokeWidth={1.9} />
+        <TopBar title="Servicios postventa" subtitle={numServiciosPendientes > 0 ? `${numServiciosPendientes} pendiente${numServiciosPendientes > 1 ? "s" : ""}` : undefined} />
+        <div className="px-5 space-y-2.5 pb-28">
+          {serviciosPendientes == null ? (
+            <SkeletonLista />
+          ) : serviciosPendientes.length === 0 ? (
+            <EmptyState icon={Wrench} titulo="Sin servicios pendientes" texto="Cuando vendas un producto que requiere curado, prueba o instalación, aparecerá aquí para que lo completes." />
+          ) : serviciosPendientes.map((s) => {
+            const c = clientePorId(s.customerId);
+            const mio = s.assignedSalespersonId === user?.uid;
+            return (
+              <Card key={s.id} className="p-4">
+                <div className="flex items-center gap-3">
+                  <span className="w-10 h-10 rounded-xl bg-accent-soft grid place-items-center shrink-0">
+                    <Package className="w-5 h-5 text-accent" strokeWidth={2} />
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[11px] text-muted">{label}</p>
-                    <p className="text-[15px] text-brand-deep font-medium truncate">{valor}</p>
+                    <p className="font-display font-semibold text-[15px] text-brand-deep truncate">{s.productName}</p>
+                    <p className="text-[13px] text-muted truncate">
+                      {c ? `${c.firstName} ${c.lastName || ""}` : s.customerName || "Cliente"} · {serviceTypeLabel(s.serviceType)}
+                    </p>
                   </div>
+                  {!mio && <Badge className="text-muted bg-surface border-hairline shrink-0">Otro vendedor</Badge>}
                 </div>
-              ))}
-            </Card>
-          </div>
-
-          <Boton variant="danger" onClick={signOut}>
-            <LogOut className="w-[18px] h-[18px]" /> Cerrar sesión
-          </Boton>
-          <p className="text-center text-xs text-muted/70">Royal Sales AI · v1.0</p>
+                {s.keepPackagedUntilService && (
+                  <p className="mt-2.5 text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                    Mantener empacado hasta completar el servicio.
+                  </p>
+                )}
+                <button
+                  onClick={() => setServicioAbierto(s)}
+                  className="mt-3 w-full min-h-[44px] rounded-xl bg-brand-dark text-[13px] font-semibold text-white flex items-center justify-center gap-1.5"
+                >
+                  <ClipboardList className="w-4 h-4" /> Ver checklist
+                </button>
+              </Card>
+            );
+          })}
         </div>
+
+        {servicioAbierto && (
+          <ServiceSheet
+            servicio={servicioAbierto}
+            cliente={clientePorId(servicioAbierto.customerId)}
+            puedeCompletar={servicioAbierto.assignedSalespersonId === user?.uid || esManager}
+            esManager={esManager}
+            esMio={servicioAbierto.assignedSalespersonId === user?.uid}
+            procesando={completandoServicio}
+            onCerrar={() => setServicioAbierto(null)}
+            onCompletar={completarServicioHandler}
+            onAsignarme={asignarmeServicioHandler}
+          />
+        )}
       </Shell>
     );
   }
@@ -1501,6 +1548,48 @@ function Shell({ children, active, setScreen, onNueva, serviciosBadge = 0 }) {
 
 function ScreenWrap({ children }) {
   return <div className="min-h-screen bg-surface max-w-md mx-auto flex flex-col">{children}</div>;
+}
+
+// Hoja de perfil (antes vivía en la pestaña "Más"). Muestra los datos de la
+// cuenta y el botón de cerrar sesión, sin ocupar un slot en la barra inferior.
+function PerfilSheet({ nombre, correo, rol, firstName, onCerrar, onSignOut }) {
+  const filas = [
+    { icon: User, label: "Nombre", valor: nombre },
+    { icon: MessageCircle, label: "Correo", valor: correo },
+    { icon: Building2, label: "Rol", valor: rol },
+  ];
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" role="dialog" aria-modal="true" aria-label="Perfil">
+      <button className="absolute inset-0 bg-brand-deep/40 backdrop-blur-[1px]" aria-label="Cerrar" onClick={onCerrar} />
+      <div className="relative w-full max-w-md bg-card rounded-t-3xl px-5 pt-3 pb-8 safe-bottom animate-in slide-in-from-bottom duration-200">
+        <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-hairline" />
+        <div className="flex items-center gap-4 mb-5">
+          <Avatar name={firstName} className="w-14 h-14 text-xl" />
+          <div className="min-w-0">
+            <p className="font-display font-bold text-brand-deep text-lg truncate">{nombre}</p>
+            <p className="text-[13px] text-muted truncate">{rol}</p>
+          </div>
+        </div>
+        <Card className="divide-y divide-hairline overflow-hidden mb-5">
+          {filas.map(({ icon: Icon, label, valor }) => (
+            <div key={label} className="flex items-center gap-3 px-4 py-3.5">
+              <span className="w-9 h-9 rounded-xl bg-brand/[0.06] grid place-items-center shrink-0">
+                <Icon className="w-[18px] h-[18px] text-brand" strokeWidth={1.9} />
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] text-muted">{label}</p>
+                <p className="text-[15px] text-brand-deep font-medium truncate">{valor}</p>
+              </div>
+            </div>
+          ))}
+        </Card>
+        <Boton variant="danger" onClick={onSignOut}>
+          <LogOut className="w-[18px] h-[18px]" /> Cerrar sesión
+        </Boton>
+        <p className="text-center text-xs text-muted/70 mt-4">Royal Sales AI · v1.0</p>
+      </div>
+    </div>
+  );
 }
 
 function NavTab({ id, label, icon: Icon, active, setScreen, badge = 0 }) {
