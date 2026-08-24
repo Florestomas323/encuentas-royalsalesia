@@ -16,7 +16,7 @@ const ACCIONES = [
   { id: "objection", label: "Rebatir una objeción", icon: Lightbulb, needs: "none",
     seed: "El cliente dice que está muy caro. ¿Cómo lo manejo?" },
   { id: "product", label: "Explicar un producto", icon: Package, needs: "none",
-    seed: "Explícame los beneficios clave para presentar este producto." },
+    prefill: "Explícame los beneficios clave de " },
   { id: "warranty", label: "Consultar garantía", icon: ShieldCheck, needs: "none",
     seed: "¿Qué cubre la garantía y qué se necesita para un reclamo?" },
   { id: "postsale", label: "Guía de postventa", icon: Wrench, needs: "customer",
@@ -38,6 +38,21 @@ export default function CopilotWidget({ getToken, customer, onNavigate, onToast 
   const [conversationId, setConversationId] = useState(null)
   const [copiado, setCopiado] = useState(null)
   const finRef = useRef(null)
+  const inputRef = useRef(null)
+
+  // Acción rápida: si trae "prefill" rellena el campo para que el vendedor
+  // complete (p. ej. el nombre del producto); si trae "seed" la envía directo.
+  function elegirAccion(a) {
+    if (a.prefill) {
+      setInput(a.prefill)
+      setTimeout(() => {
+        const el = inputRef.current
+        if (el) { el.focus(); el.setSelectionRange(a.prefill.length, a.prefill.length) }
+      }, 0)
+    } else if (a.seed) {
+      enviar(a.seed)
+    }
+  }
 
   // Si cambia el cliente activo, reactivamos el contexto por defecto.
   useEffect(() => { setUsarContexto(true) }, [customer?.id])
@@ -204,7 +219,7 @@ export default function CopilotWidget({ getToken, customer, onNavigate, onToast 
                       return (
                         <button
                           key={a.id}
-                          onClick={() => enviar(a.seed)}
+                          onClick={() => elegirAccion(a)}
                           className="flex items-center gap-3 rounded-2xl bg-card border border-hairline px-4 py-3 text-left active:bg-hairline transition"
                         >
                           <span className="w-8 h-8 rounded-lg bg-accent-soft grid place-items-center shrink-0">
@@ -283,6 +298,7 @@ export default function CopilotWidget({ getToken, customer, onNavigate, onToast 
             <div className="px-4 py-3 border-t border-hairline bg-card">
               <div className="flex items-end gap-2">
                 <textarea
+                  ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {

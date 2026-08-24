@@ -209,6 +209,20 @@ export default function ContentLibrary({
           className="w-full rounded-xl border border-hairline bg-card pl-9 pr-3 py-2.5 text-sm text-brand-deep"
         />
       </div>
+      {productosFiltrados.length === 0 && (
+        <div className="text-center py-12 px-6">
+          <BookOpen className="w-9 h-9 text-muted/40 mx-auto mb-3" strokeWidth={1.6} />
+          {productos.length === 0 ? (
+            <p className="text-[13px] text-muted leading-relaxed">
+              Aún no hay productos en el catálogo. Cuando el distribuidor agregue productos, aparecerán aquí para gestionar su contenido oficial.
+            </p>
+          ) : (
+            <p className="text-[13px] text-muted leading-relaxed">
+              Sin resultados para <span className="font-semibold text-brand-deep">&ldquo;{busqueda.trim()}&rdquo;</span>. Revisa el nombre o borra la búsqueda para ver todos los productos.
+            </p>
+          )}
+        </div>
+      )}
       <div className="space-y-2.5">
         {productosFiltrados.map((p) => {
           const arr = porProducto.get(p.id) || [];
