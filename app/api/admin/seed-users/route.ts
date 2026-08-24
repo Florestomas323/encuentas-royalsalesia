@@ -1,112 +1,85 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { adminAuth } from "@/lib/firebase/admin";
+import { runAI } from "@/lib/ai/openai";
+import { customerProfilePrompt, followupPrompt, loyaltyPrompt } from "@/lib/ai/prompts/customerProfile";
+import { validateCustomerProfile, validateFollowup, validateLoyalty } from "@/lib/ai/validate";
 
-// Endpoint de un solo uso para crear los dos perfiles iniciales de Royal Sales AI.
-// Protegido con un secreto de servidor (SEED_ADMIN_SECRET) — nadie puede llamarlo
-// sin conocer ese valor, que solo existe como variable de entorno en Vercel.
-// Los correos están fijos en el código a propósito: este endpoint NO sirve para
-// crear usuarios arbitrarios, solo para sembrar estas dos cuentas conocidas.
-const DISTRIBUTOR_EMAIL = "rrhh.venezia@gmail.com";
-const REVIEWER_EMAIL = "florestomas323@gmail.com";
+// Rate limit simple en memoria: suficiente para MVP, evita que un doble toque
+// o un bucle accidental dispare cientos de llamadas. Se reinicia con el servidor.
+const RATE_LIMIT = 30;          // llamadas
+const RATE_WINDOW_MS = 60 * 60 * 1000; // por hora, por usuario
+const hits = new Map<string, number[]>();
+
+function rateLimited(uid: string): boolean {
+  const ahora = Date.now();
+  const previos = (hits.get(uid) || []).filter((t) => ahora - t < RATE_WINDOW_MS);
+  previos.push(ahora);
+  hits.set(uid, previos);
+  return previos.length > RATE_LIMIT;
+}
+
+const MAX_OBSERVATIONS = 600;
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-seed-secret");
-  if (!process.env.SEED_ADMIN_SECRET || secret !== process.env.SEED_ADMIN_SECRET) {
-    return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+  // 1. Verificar el token de Firebase — nunca confiar en un uid enviado por el frontend.
+  const authHeader = req.headers.get("authorization") || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+
+  let uid: string;
+  try {
+    const decoded = await adminAuth().verifyIdToken(token);
+    uid = decoded.uid;
+  } catch {
+    return NextResponse.json({ error: "Sesión inválida." }, { status: 401 });
   }
 
-  const resultado: Record<string, unknown> = {};
+  if (rateLimited(uid)) {
+    return NextResponse.json({ error: "Demasiadas solicitudes. Espera unos minutos." }, { status: 429 });
+  }
+
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Solicitud inválida." }, { status: 400 });
+  }
+
+  const tipo = body?.type;
 
   try {
-    // ---- Distribuidor: Andrés Characo ----
-    const andresAuth = await adminAuth()
-      .getUserByEmail(DISTRIBUTOR_EMAIL)
-      .catch(() => null);
-    if (!andresAuth) {
-      return NextResponse.json(
-        { error: `No existe ningún usuario en Firebase Authentication con el correo ${DISTRIBUTOR_EMAIL}. Créalo primero desde Firebase Console.` },
-        { status: 404 }
-      );
+    if (tipo === "customerProfile") {
+      const raw = await runAI(customerProfilePrompt({
+        responses: body.responses ?? {},
+        internalInfo: body.internalInfo ?? {},
+        observations: String(body.observations || "").slice(0, MAX_OBSERVATIONS),
+        familySize: body.familySize ?? null,
+      }));
+      return NextResponse.json({ result: validateCustomerProfile(raw) });
     }
 
-    const db = adminDb();
-
-    // Busca si ya existe una organización de la que Andrés sea dueño, para
-    // que este endpoint se pueda llamar más de una vez sin duplicar datos.
-    const orgQuery = await db.collection("organizations").where("ownerUid", "==", andresAuth.uid).limit(1).get();
-    let organizationId: string;
-    if (!orgQuery.empty) {
-      organizationId = orgQuery.docs[0].id;
-    } else {
-      const orgRef = await db.collection("organizations").add({
-        name: "Royal Sales AI - Andres Characo",
-        ownerUid: andresAuth.uid,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-      organizationId = orgRef.id;
+    if (tipo === "followup") {
+      const raw = await runAI(followupPrompt({
+        outcome: body.outcome === "lost" ? "lost" : "pending",
+        reason: String(body.reason || "").slice(0, 200),
+        profile: body.profile ?? {},
+      }), 800);
+      return NextResponse.json({ result: validateFollowup(raw) });
     }
 
-    await db.collection("users").doc(andresAuth.uid).set(
-      {
-        firstName: "Andres",
-        lastName: "Characo",
-        email: DISTRIBUTOR_EMAIL.toLowerCase(),
-        role: "distributor",
-        organizationId,
-        isTestUser: false,
-        active: true,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-    resultado.distributor = { uid: andresAuth.uid, organizationId };
-
-    // ---- Reviewer: cuenta interna de revisión ----
-    const reviewerAuth = await adminAuth()
-      .getUserByEmail(REVIEWER_EMAIL)
-      .catch(() => null);
-    if (!reviewerAuth) {
-      return NextResponse.json(
-        {
-          error: `No existe ningún usuario en Firebase Authentication con el correo ${REVIEWER_EMAIL}. Créalo primero desde Firebase Console.`,
-          parcial: resultado,
-        },
-        { status: 404 }
-      );
+    if (tipo === "loyalty") {
+      const raw = await runAI(loyaltyPrompt({
+        profile: body.profile ?? {},
+        product: String(body.product || "").slice(0, 200),
+        favoriteMeal: String(body.favoriteMeal || "").slice(0, 200),
+      }), 1000);
+      return NextResponse.json({ result: validateLoyalty(raw) });
     }
 
-    // El reviewer trabaja en su propia organización de Testing — nunca en la real.
-    const testOrgQuery = await db.collection("organizations").where("ownerUid", "==", reviewerAuth.uid).limit(1).get();
-    let testOrgId: string;
-    if (!testOrgQuery.empty) {
-      testOrgId = testOrgQuery.docs[0].id;
-    } else {
-      const testOrgRef = await db.collection("organizations").add({
-        name: "Royal Sales AI — Testing",
-        ownerUid: reviewerAuth.uid,
-        isTestOrganization: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-      testOrgId = testOrgRef.id;
-    }
-
-    await db.collection("users").doc(reviewerAuth.uid).set(
-      {
-        email: REVIEWER_EMAIL.toLowerCase(),
-        role: "reviewer",
-        organizationId: testOrgId,
-        isTestUser: true,
-        active: true,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-    resultado.reviewer = { uid: reviewerAuth.uid, organizationId: testOrgId };
-
-    return NextResponse.json({ ok: true, ...resultado });
+    return NextResponse.json({ error: "Tipo de análisis desconocido." }, { status: 400 });
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "Error inesperado." }, { status: 500 });
+    // Log técnico sin datos del cliente ni credenciales.
+    console.error("[ai/analyze]", tipo, err?.message);
+    return NextResponse.json({ error: "No pudimos generar el análisis en este momento." }, { status: 502 });
   }
 }
