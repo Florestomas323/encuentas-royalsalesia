@@ -40,6 +40,7 @@ import ContentLibrary from "@/components/content/ContentLibrary";
 import ProductAssistant from "@/components/content/ProductAssistant";
 import Customer360 from "@/components/customer/Customer360";
 import AttentionPanel from "@/components/dashboard/AttentionPanel";
+import CopilotWidget from "@/components/copilot/CopilotWidget";
 
 // ---------- ENCUESTA (claves semánticas camelCase — solo preguntas para el cliente) ----------
 const PREGUNTAS = [
@@ -783,6 +784,25 @@ export default function RoyalSalesAIDemo() {
     </span>
   ) : null;
 
+  // Royal Copilot — se monta en las pantallas principales. En la ficha del
+  // cliente le pasamos ese cliente como contexto activo; en el resto va sin
+  // contexto. La navegación desde sus acciones reutiliza setScreen/abrirFicha.
+  function navegarDesdeCopilot(pantalla, payload) {
+    if (pantalla === "fichaCliente" && payload?.customerId) {
+      const c = clientePorId(payload.customerId);
+      if (c) { abrirFicha(c); return; }
+    }
+    if (typeof pantalla === "string") setScreen(pantalla);
+  }
+  const Copilot = (
+    <CopilotWidget
+      getToken={() => auth.currentUser?.getIdToken()}
+      customer={screen === "fichaCliente" ? fichaCliente : null}
+      onNavigate={navegarDesdeCopilot}
+      onToast={mostrarToast}
+    />
+  );
+
   // ---------- DASHBOARD ----------
   if (screen === "dashboard") {
     const seguimientosHoy = (followupsVisibles || []).filter((f) => {
@@ -793,6 +813,7 @@ export default function RoyalSalesAIDemo() {
     return (
       <Shell active="dashboard" setScreen={setScreen} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
         {Toast}
+        {Copilot}
         <div className="bg-brand-deep rounded-b-[2rem] px-5 pt-7 pb-8">
           <div className="flex items-start justify-between">
             <div>
@@ -1349,6 +1370,7 @@ export default function RoyalSalesAIDemo() {
     return (
       <Shell active="clientes" setScreen={setScreen} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
         {Toast}
+        {Copilot}
         <TopBar title="Clientes" subtitle={clientes ? `${clientes.length} en total` : undefined} />
 
         {clientes && clientes.length > 0 && (
@@ -1425,6 +1447,7 @@ export default function RoyalSalesAIDemo() {
     return (
       <ScreenWrap>
         {Toast}
+        {Copilot}
         <TopBar title={`${c.firstName} ${c.lastName || ""}`} onBack={() => setScreen("clientes")} />
         <div className="flex-1">
           <Customer360
