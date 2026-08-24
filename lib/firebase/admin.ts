@@ -3,38 +3,47 @@ import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 
-// Variables PRIVADAS de servidor — NUNCA deben llevar el prefijo NEXT_PUBLIC_.
-// Se configuran únicamente en Vercel (Project Settings → Environment Variables),
-// nunca se suben al repositorio.
-// Normaliza la private key. En Vercel suele pegarse de dos formas distintas:
-//   1. Con saltos de línea reales (al copiar del .json tal cual).
-//   2. Con "\n" escapados en una sola línea.
-// Además, a veces queda envuelta en comillas al copiar/pegar. Cualquiera de esas
-// variantes rompe cert() con un error poco claro, así que las corregimos aquí.
-function normalizePrivateKey(raw?: string): string | undefined {
-  if (!raw) return undefined;
-  let key = raw.trim();
-  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
-    key = key.slice(1, -1);
-  }
-  return key.replace(/\\n/g, "\n").trim();
-}
-
+// Credenciales de servidor en una sola variable: FIREBASE_SERVICE_ACCOUNT_JSON
+// contiene el JSON completo del service account descargado de Firebase Console.
+// Pegarlo entero evita los problemas de formato de la private key (saltos de
+// línea escapados, comillas, cortes al copiar) que dan las variables sueltas.
+//
+// NUNCA debe llevar el prefijo NEXT_PUBLIC_ — solo existe en el servidor.
 function getAdminApp(): App {
   if (getApps().length) return getApps()[0];
 
-  const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID?.trim();
-  const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL?.trim();
-  const privateKey = normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+  if (!raw) {
+    throw new Error("Falta FIREBASE_SERVICE_ACCOUNT_JSON en las variables de entorno.");
+  }
 
-  if (!projectId || !clientEmail || !privateKey) {
+  let serviceAccount: {
+    project_id?: string;
+    client_email?: string;
+    private_key?: string;
+  };
+
+  try {
+    serviceAccount = JSON.parse(raw);
+  } catch {
     throw new Error(
-      "Faltan variables de Firebase Admin. Revisa FIREBASE_ADMIN_PROJECT_ID, FIREBASE_ADMIN_CLIENT_EMAIL y FIREBASE_ADMIN_PRIVATE_KEY."
+      "FIREBASE_SERVICE_ACCOUNT_JSON no es un JSON válido. Pega el contenido completo del archivo de credenciales, desde la primera llave { hasta la última }."
+    );
+  }
+
+  if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
+    throw new Error(
+      "El JSON del service account está incompleto. Debe incluir project_id, client_email y private_key."
     );
   }
 
   return initializeApp({
-    credential: cert({ projectId, clientEmail, privateKey }),
+    credential: cert({
+      projectId: serviceAccount.project_id,
+      clientEmail: serviceAccount.client_email,
+      // Si el JSON viene con \n escapados (según cómo se haya copiado), los normalizamos.
+      privateKey: serviceAccount.private_key.replace(/\\n/g, "\n"),
+    }),
   });
 }
 
