@@ -23,13 +23,20 @@ export async function GET(req: NextRequest) {
   diagnostico.longitud = raw?.length ?? 0;
   diagnostico.empiezaCon = raw ? raw.trim().slice(0, 1) : null;
 
+  // Proyecto que usa el NAVEGADOR (las NEXT_PUBLIC_* también están disponibles
+  // en el servidor, así que las leemos aquí para poder compararlas).
+  const clientProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? null;
+  diagnostico.proyectoNavegador = clientProjectId;
+
   // 2. ¿Se puede interpretar?
+  let serverProjectId: string | null = null;
   try {
     const { parseServiceAccount } = await import("@/lib/firebase/admin");
     const parsed = parseServiceAccount(raw);
     diagnostico.credencialesValidas = parsed.ok;
     if (parsed.ok) {
-      diagnostico.projectId = parsed.account.project_id;
+      serverProjectId = parsed.account.project_id;
+      diagnostico.proyectoServidor = parsed.account.project_id;
       diagnostico.clientEmail = parsed.account.client_email;
       diagnostico.privateKeyLongitud = parsed.account.private_key.length;
     } else {
@@ -38,6 +45,18 @@ export async function GET(req: NextRequest) {
   } catch (err: any) {
     diagnostico.credencialesValidas = false;
     diagnostico.motivo = err?.message;
+  }
+
+  // 2b. ¿Coinciden los dos proyectos? Esta es la causa #1 de "el seed dice OK
+  // pero el login no encuentra el perfil": el navegador escribe/lee en un
+  // proyecto y el servidor en otro, así que el uid nunca coincide.
+  if (clientProjectId && serverProjectId) {
+    diagnostico.proyectosCoinciden = clientProjectId === serverProjectId;
+    if (clientProjectId !== serverProjectId) {
+      diagnostico.PROBLEMA =
+        `El navegador usa el proyecto "${clientProjectId}" pero el servidor escribe en "${serverProjectId}". ` +
+        `Corrige NEXT_PUBLIC_FIREBASE_PROJECT_ID (y AUTH_DOMAIN / STORAGE_BUCKET) en Vercel para que apunten a "${serverProjectId}", vuelve a desplegar y ejecuta el seed otra vez.`;
+    }
   }
 
   // 3. ¿Firebase Admin conecta de verdad?
@@ -49,6 +68,36 @@ export async function GET(req: NextRequest) {
     } catch (err: any) {
       diagnostico.conexionFirebase = "FALLÓ";
       diagnostico.motivoConexion = err?.message;
+    }
+  }
+
+  // 4. Prueba definitiva: para cada correo sembrado, ¿existe en Authentication
+  // y existe REALMENTE su documento users/{uid} en Firestore? Esto confirma si
+  // el perfil que el login busca está donde debe estar.
+  if (diagnostico.credencialesValidas && diagnostico.conexionFirebase === "OK") {
+    try {
+      const { adminAuth, adminDb } = await import("@/lib/firebase/admin");
+      const perfiles: Record<string, unknown> = {};
+      for (const [etiqueta, email] of [
+        ["distribuidor", "rrhh.venezia@gmail.com"],
+        ["reviewer", "florestomas323@gmail.com"],
+      ] as const) {
+        try {
+          const u = await adminAuth().getUserByEmail(email);
+          const snap = await adminDb().collection("users").doc(u.uid).get();
+          perfiles[etiqueta] = {
+            email,
+            uid: u.uid,
+            documentoUsersExiste: snap.exists,
+            rol: snap.exists ? (snap.data() as any)?.role ?? null : null,
+          };
+        } catch {
+          perfiles[etiqueta] = { email, existeEnAuth: false };
+        }
+      }
+      diagnostico.perfiles = perfiles;
+    } catch (err: any) {
+      diagnostico.perfilesError = err?.message;
     }
   }
 
