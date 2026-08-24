@@ -104,6 +104,7 @@ export async function createProductContent(ctx: Ctx, data: Partial<ProductConten
   const ref = await addDoc(collection(db, "productContent"), {
     ...data,
     organizationId: ctx.profile.organizationId,
+    isTestData: !!ctx.profile.isTestUser,
     status: (data.status as any) || "draft",
     source: data.source || "manual",
     active: false,

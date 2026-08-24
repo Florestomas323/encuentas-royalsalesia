@@ -113,6 +113,36 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Fase A/D — líneas de compra ligadas al catálogo. No llevan salespersonId;
+    // el aislamiento es por organización. Append-only (igual que purchases).
+    match /purchaseItems/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg();
+      allow read: if isSignedIn() && resourceInMyOrg();
+      allow update, delete: if false;
+    }
+
+    // Fase B/D — servicios postventa. Ownership por assignedSalespersonId.
+    // Lo completa/reasigna el dueño o un manager; nunca se borra desde cliente.
+    match /postSaleServices/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg()
+        && request.resource.data.assignedSalespersonId == request.auth.uid;
+      allow read: if isSignedIn() && resourceInMyOrg()
+        && (isOrgManager() || resource.data.assignedSalespersonId == request.auth.uid);
+      allow update: if isSignedIn() && resourceInMyOrg() && protectedFieldsUnchanged()
+        && (isOrgManager() || resource.data.assignedSalespersonId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    // Fase C/D — contenido oficial de producto. Cualquiera de la org crea/edita
+    // borradores; SOLO un manager puede aprobar/rechazar (cambiar el status).
+    match /productContent/{id} {
+      allow create: if isSignedIn() && creatingInMyOrg();
+      allow read: if isSignedIn() && resourceInMyOrg();
+      allow update: if isSignedIn() && resourceInMyOrg() && protectedFieldsUnchanged()
+        && (isOrgManager() || request.resource.data.status == resource.data.status);
+      allow delete: if isSignedIn() && resourceInMyOrg();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

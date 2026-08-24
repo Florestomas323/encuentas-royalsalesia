@@ -14,11 +14,11 @@ import { normalizePhone, toWhatsAppNumber, isValidPhone } from "@/lib/phone";
 import { calculateOpportunity, OPPORTUNITY_LABELS } from "@/lib/scoring/opportunityScore";
 import {
   findCustomerByPhone, createCustomer, updateCustomer, subscribeCustomers, getCustomer,
-  createVisit, updateVisit, findInProgressVisit, getVisitsForCustomer,
+  createVisit, updateVisit, findInProgressVisit,
   saveSurveyResponses, saveAiProfile, saveVisitResult, savePurchaseWithItems,
-  createFollowup, subscribeFollowups, completeFollowup, getFollowupsForCustomer,
-  logInteraction, getInteractionsForCustomer, getRecentVisits, tsToDate,
-  softDeleteCustomer, getPurchaseItemsForCustomer, repairFollowupsForDeletedCustomers,
+  createFollowup, subscribeFollowups, completeFollowup,
+  logInteraction, getRecentVisits, tsToDate,
+  softDeleteCustomer, repairFollowupsForDeletedCustomers,
   repairLoyaltyContentForNonCookingCustomers,
   createPostSaleServices, subscribePostSaleServices, completePostSaleService, assignPostSaleServiceToMe,
 } from "@/lib/db/services";
@@ -183,13 +183,11 @@ export default function RoyalSalesAIDemo() {
   const [visitaEnProgreso, setVisitaEnProgreso] = useState(null);
   const [metricas, setMetricas] = useState(null);
   const [fichaCliente, setFichaCliente] = useState(null);
-  const [fichaTimeline, setFichaTimeline] = useState(null);
   const [waLogFollowup, setWaLogFollowup] = useState(null);
 
   // Fase A: catálogo, items de compra, eliminación y compras de la ficha.
   const [productos, setProductos] = useState([]);
   const [itemsCompra, setItemsCompra] = useState([]);
-  const [fichaCompras, setFichaCompras] = useState(null);
   const [confirmarEliminar, setConfirmarEliminar] = useState(null); // cliente a eliminar
   const [eliminando, setEliminando] = useState(false);
 
@@ -746,6 +744,7 @@ export default function RoyalSalesAIDemo() {
       await softDeleteCustomer(ctx, confirmarEliminar.id);
       setConfirmarEliminar(null);
       setFichaCliente(null);
+      setFicha360(null);
       setScreen("clientes");
       mostrarToast("Cliente eliminado");
     } catch (e) {
@@ -817,9 +816,14 @@ export default function RoyalSalesAIDemo() {
               </button>
             </div>
           </div>
-          <div className="mt-5 grid grid-cols-3 gap-2.5">
-            <KpiCard icon={Home} valor={metricas?.visitasHoy ?? "—"} label="Visitas hoy" />
-            <KpiCard icon={TrendingUp} valor={metricas?.ventasHoy ?? "—"} label="Ventas hoy" />
+          {esManager && (
+            <p className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-300/80">
+              <Users className="w-3.5 h-3.5" /> Vista de equipo · toda la organización
+            </p>
+          )}
+          <div className="mt-4 grid grid-cols-3 gap-2.5">
+            <KpiCard icon={Home} valor={metricas?.visitasHoy ?? "—"} label={esManager ? "Visitas equipo" : "Visitas hoy"} />
+            <KpiCard icon={TrendingUp} valor={metricas?.ventasHoy ?? "—"} label={esManager ? "Ventas equipo" : "Ventas hoy"} />
             <KpiCard icon={CalendarClock} valor={seguimientosHoy.length} label="Seguim. hoy" />
           </div>
         </div>
@@ -843,40 +847,19 @@ export default function RoyalSalesAIDemo() {
             <Plus className="w-5 h-5" strokeWidth={2.6} /> Nueva visita
           </Boton>
 
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-display font-bold text-brand-deep text-[17px]">Seguimientos de hoy</h2>
-              {seguimientosHoy.length > 0 && (
-                <button onClick={() => setScreen("seguimientos")} className="text-[13px] font-semibold text-brand-dark">Ver todos</button>
-              )}
-            </div>
-            {followupsVisibles == null ? (
-              <SkeletonLista />
-            ) : seguimientosHoy.length === 0 ? (
-              <EmptyState
-                icon={CalendarClock}
-                titulo="Sin seguimientos para hoy"
-                texto="Cuando programes un seguimiento, aparecerá aquí para que no se te escape."
-                action={<Boton variant="secondary" onClick={() => setScreen("seguimientos")}>Ver próximos</Boton>}
-              />
-            ) : (
-              <div className="space-y-2.5">
-                {seguimientosHoy.slice(0, 5).map((s) => {
-                  const c = clientePorId(s.customerId);
-                  return (
-                    <Card key={s.id} className="p-3.5 flex items-center gap-3">
-                      <Avatar name={c?.firstName} className="w-11 h-11 text-base" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-display font-semibold text-[15px] text-brand-deep truncate">{c ? `${c.firstName} ${c.lastName || ""}` : "Cliente"}</p>
-                        <p className="text-[13px] text-muted truncate">{s.objective || s.type}</p>
-                      </div>
-                      <Badge className="text-accent bg-accent-soft border-accent/15">{fmtDia(tsToDate(s.scheduledAt))}</Badge>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          {/* Fase D: panel priorizado "Requiere atención" */}
+          {followupsVisibles == null ? (
+            <SkeletonLista />
+          ) : (
+            <AttentionPanel
+              followups={followupsVisibles}
+              servicios={servicios}
+              clientePorId={clientePorId}
+              onAbrirCliente={(id) => { const c = clientePorId(id); if (c) abrirFicha(c); else setScreen("seguimientos"); }}
+              onVerSeguimientos={() => setScreen("seguimientos")}
+              onVerServicios={() => setScreen("servicios")}
+            />
+          )}
         </div>
         {perfilAbierto && (
           <PerfilSheet
@@ -1348,15 +1331,20 @@ export default function RoyalSalesAIDemo() {
     const abrirNuevaVisita = () => { limpiarFlujo(); setScreen("nuevaVisita"); };
     const q = busquedaCliente.trim().toLowerCase();
     const lista = (clientes || []).filter((c) => {
-      const coincideEstado = filtroEstado === "todos" || (c.status || "new") === filtroEstado;
+      const coincideEstado =
+        filtroEstado === "todos" ? true :
+        filtroEstado === "servicio" ? clientesConServicio.has(c.id) :
+        (c.status || "new") === filtroEstado;
       const nombre = `${c.firstName || ""} ${c.lastName || ""} ${c.phone || ""}`.toLowerCase();
       return coincideEstado && (!q || nombre.includes(q));
     });
+    const numConServicio = (clientes || []).filter((c) => clientesConServicio.has(c.id)).length;
     const chips = [
       ["todos", "Todos"],
       ["new", ETIQUETA_ESTADO.new || "Nuevo"],
       ["customer", ETIQUETA_ESTADO.customer || "Cliente"],
       ["pending", ETIQUETA_ESTADO.pending || "Pendiente"],
+      ...(numConServicio > 0 ? [["servicio", "Con servicio"]] : []),
     ];
     return (
       <Shell active="clientes" setScreen={setScreen} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
@@ -1415,7 +1403,14 @@ export default function RoyalSalesAIDemo() {
                 <p className="font-display font-semibold text-[15px] text-brand-deep truncate">{c.firstName} {c.lastName || ""}</p>
                 <p className="text-[13px] text-muted truncate">{c.phone}{c.familySize ? ` · ${c.familySize} integrantes` : ""}</p>
               </div>
-              <Badge className={COLOR_ESTADO[c.status] || COLOR_ESTADO.new}>{ETIQUETA_ESTADO[c.status] || "Nuevo"}</Badge>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <Badge className={COLOR_ESTADO[c.status] || COLOR_ESTADO.new}>{ETIQUETA_ESTADO[c.status] || "Nuevo"}</Badge>
+                {clientesConServicio.has(c.id) && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700">
+                    <Wrench className="w-3 h-3" /> Servicio
+                  </span>
+                )}
+              </div>
             </button>
           ))}
         </div>
