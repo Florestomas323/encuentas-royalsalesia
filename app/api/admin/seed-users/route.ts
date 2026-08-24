@@ -1,85 +1,169 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth } from "@/lib/firebase/admin";
-import { runAI } from "@/lib/ai/openai";
-import { customerProfilePrompt, followupPrompt, loyaltyPrompt } from "@/lib/ai/prompts/customerProfile";
-import { validateCustomerProfile, validateFollowup, validateLoyalty } from "@/lib/ai/validate";
 
-// Rate limit simple en memoria: suficiente para MVP, evita que un doble toque
-// o un bucle accidental dispare cientos de llamadas. Se reinicia con el servidor.
-const RATE_LIMIT = 30;          // llamadas
-const RATE_WINDOW_MS = 60 * 60 * 1000; // por hora, por usuario
-const hits = new Map<string, number[]>();
+// Endpoint de configuración inicial. Crea (o actualiza) los perfiles de los dos
+// usuarios conocidos del sistema. Es idempotente: se puede ejecutar varias veces
+// sin duplicar organizaciones ni usuarios.
+//
+// El secreto viaja en el body JSON, no en un header personalizado.
+const DISTRIBUTOR_EMAIL = "rrhh.venezia@gmail.com";
+const REVIEWER_EMAIL = "florestomas323@gmail.com";
 
-function rateLimited(uid: string): boolean {
-  const ahora = Date.now();
-  const previos = (hits.get(uid) || []).filter((t) => ahora - t < RATE_WINDOW_MS);
-  previos.push(ahora);
-  hits.set(uid, previos);
-  return previos.length > RATE_LIMIT;
+function fail(message: string, status: number) {
+  return NextResponse.json({ ok: false, error: message }, { status });
 }
 
-const MAX_OBSERVATIONS = 600;
-
 export async function POST(req: NextRequest) {
-  // 1. Verificar el token de Firebase — nunca confiar en un uid enviado por el frontend.
-  const authHeader = req.headers.get("authorization") || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  if (!token) return NextResponse.json({ error: "No autorizado." }, { status: 401 });
-
-  let uid: string;
-  try {
-    const decoded = await adminAuth().verifyIdToken(token);
-    uid = decoded.uid;
-  } catch {
-    return NextResponse.json({ error: "Sesión inválida." }, { status: 401 });
-  }
-
-  if (rateLimited(uid)) {
-    return NextResponse.json({ error: "Demasiadas solicitudes. Espera unos minutos." }, { status: 429 });
-  }
-
+  // --- 1. Leer el body ---
   let body: any;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Solicitud inválida." }, { status: 400 });
+    return fail("No pudimos leer la solicitud. Intenta de nuevo.", 400);
   }
 
-  const tipo = body?.type;
+  const secret = String(body?.secret || "").trim();
+  const expectedSecret = process.env.SEED_ADMIN_SECRET?.trim();
 
+  // --- 2. Validar el secreto (casos 1 y 2) ---
+  if (!expectedSecret) {
+    return fail("SEED_ADMIN_SECRET no está configurado en Vercel.", 500);
+  }
+  if (!secret) {
+    return fail("Escribe el secreto para continuar.", 400);
+  }
+  if (secret !== expectedSecret) {
+    return fail("El secreto ingresado no coincide.", 401);
+  }
+
+  // --- 3. Inicializar Firebase Admin (caso 3) ---
+  // Se importa dinámicamente para que un fallo de credenciales se capture aquí
+  // como un error legible, en vez de romper el módulo entero al cargarse.
+  let adminAuth: any, adminDb: any, FieldValue: any;
   try {
-    if (tipo === "customerProfile") {
-      const raw = await runAI(customerProfilePrompt({
-        responses: body.responses ?? {},
-        internalInfo: body.internalInfo ?? {},
-        observations: String(body.observations || "").slice(0, MAX_OBSERVATIONS),
-        familySize: body.familySize ?? null,
-      }));
-      return NextResponse.json({ result: validateCustomerProfile(raw) });
-    }
-
-    if (tipo === "followup") {
-      const raw = await runAI(followupPrompt({
-        outcome: body.outcome === "lost" ? "lost" : "pending",
-        reason: String(body.reason || "").slice(0, 200),
-        profile: body.profile ?? {},
-      }), 800);
-      return NextResponse.json({ result: validateFollowup(raw) });
-    }
-
-    if (tipo === "loyalty") {
-      const raw = await runAI(loyaltyPrompt({
-        profile: body.profile ?? {},
-        product: String(body.product || "").slice(0, 200),
-        favoriteMeal: String(body.favoriteMeal || "").slice(0, 200),
-      }), 1000);
-      return NextResponse.json({ result: validateLoyalty(raw) });
-    }
-
-    return NextResponse.json({ error: "Tipo de análisis desconocido." }, { status: 400 });
+    const admin = await import("@/lib/firebase/admin");
+    const firestore = await import("firebase-admin/firestore");
+    adminAuth = admin.adminAuth();
+    adminDb = admin.adminDb();
+    FieldValue = firestore.FieldValue;
   } catch (err: any) {
-    // Log técnico sin datos del cliente ni credenciales.
-    console.error("[ai/analyze]", tipo, err?.message);
-    return NextResponse.json({ error: "No pudimos generar el análisis en este momento." }, { status: 502 });
+    console.error("[seed-users] Firebase Admin init:", err?.message);
+    return fail(
+      "Firebase Admin no pudo inicializarse. Revisa FIREBASE_ADMIN_PROJECT_ID, FIREBASE_ADMIN_CLIENT_EMAIL y FIREBASE_ADMIN_PRIVATE_KEY en Vercel.",
+      500
+    );
   }
+
+  // --- 4. Buscar los usuarios en Firebase Authentication (casos 4 y 5) ---
+  let andresUid: string;
+  let reviewerUid: string;
+  try {
+    const andres = await adminAuth.getUserByEmail(DISTRIBUTOR_EMAIL);
+    andresUid = andres.uid;
+  } catch (err: any) {
+    console.error("[seed-users] getUserByEmail distribuidor:", err?.code);
+    return fail(
+      `No se encontró a ${DISTRIBUTOR_EMAIL} en Firebase Authentication. Créalo primero en Firebase Console → Authentication → Users → Add user.`,
+      404
+    );
+  }
+  try {
+    const reviewer = await adminAuth.getUserByEmail(REVIEWER_EMAIL);
+    reviewerUid = reviewer.uid;
+  } catch (err: any) {
+    console.error("[seed-users] getUserByEmail reviewer:", err?.code);
+    return fail(
+      `No se encontró a ${REVIEWER_EMAIL} en Firebase Authentication. Créalo primero en Firebase Console → Authentication → Users → Add user.`,
+      404
+    );
+  }
+
+  // Reutiliza la organización existente del dueño si ya la hay (idempotencia).
+  async function ensureOrganization(ownerUid: string, name: string, isTest: boolean) {
+    const existing = await adminDb
+      .collection("organizations")
+      .where("ownerUid", "==", ownerUid)
+      .limit(1)
+      .get();
+    if (!existing.empty) return existing.docs[0].id;
+
+    const ref = await adminDb.collection("organizations").add({
+      name,
+      ownerUid,
+      isTestOrganization: isTest,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return ref.id;
+  }
+
+  // ID determinista: volver a ejecutar el seed sobrescribe en vez de duplicar.
+  async function ensureMembership(organizationId: string, uid: string, role: string) {
+    await adminDb
+      .collection("organizationMembers")
+      .doc(`${organizationId}_${uid}`)
+      .set(
+        {
+          organizationId,
+          uid,
+          role,
+          active: true,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+  }
+
+  const resultado: Record<string, unknown> = {};
+
+  // --- 5. Distribuidor: organización, perfil y membresía (casos 6, 7, 8, 9) ---
+  try {
+    const orgId = await ensureOrganization(andresUid, "Royal Sales AI - Andres Characo", false);
+
+    await adminDb.collection("users").doc(andresUid).set(
+      {
+        firstName: "Andres",
+        lastName: "Characo",
+        email: DISTRIBUTOR_EMAIL,
+        role: "distributor",
+        organizationId: orgId,
+        isTestUser: false,
+        active: true,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    await ensureMembership(orgId, andresUid, "distributor");
+    resultado.distributor = { uid: andresUid, organizationId: orgId };
+  } catch (err: any) {
+    console.error("[seed-users] distribuidor:", err?.message);
+    return fail("No se pudo crear la organización o el perfil del distribuidor en Firestore.", 500);
+  }
+
+  // --- 6. Reviewer: organización de testing separada, perfil y membresía ---
+  try {
+    const testOrgId = await ensureOrganization(reviewerUid, "Royal Sales AI — Testing", true);
+
+    await adminDb.collection("users").doc(reviewerUid).set(
+      {
+        firstName: "Tomas",
+        lastName: "Flores",
+        email: REVIEWER_EMAIL,
+        role: "reviewer",
+        organizationId: testOrgId,
+        isTestUser: true,
+        active: true,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    await ensureMembership(testOrgId, reviewerUid, "reviewer");
+    resultado.reviewer = { uid: reviewerUid, organizationId: testOrgId };
+  } catch (err: any) {
+    console.error("[seed-users] reviewer:", err?.message);
+    return fail("No se pudo crear la organización de testing o el perfil del reviewer en Firestore.", 500);
+  }
+
+  return NextResponse.json({ ok: true, ...resultado });
 }
