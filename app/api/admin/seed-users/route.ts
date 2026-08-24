@@ -309,22 +309,36 @@ export async function POST(req: NextRequest) {
   // Compara el proyecto del NAVEGADOR con el del SERVIDOR y vuelve a leer los
   // documentos recién escritos. Así, al ejecutar el setup, se ve en pantalla si
   // hay un desajuste de proyectos (la causa #1 de "el login no encuentra el perfil").
-  const clientProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? null;
+  // Limpiamos espacios/comillas: la app cliente ya hace lo mismo, así que la
+  // comparación debe usar los valores saneados para reflejar la realidad.
+  const limpiar = (v: string | undefined | null) =>
+    v == null ? null : (v.trim().replace(/^['"]|['"]$/g, "").trim() || null);
+
+  const clientRaw = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? null;
+  const clientProjectId = limpiar(clientRaw);
   let serverProjectId: string | null = null;
   try {
     const { parseServiceAccount } = await import("@/lib/firebase/admin");
     const parsed = parseServiceAccount(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-    if (parsed.ok) serverProjectId = parsed.account.project_id;
+    if (parsed.ok) serverProjectId = limpiar(parsed.account.project_id);
   } catch { /* ya validado arriba */ }
 
   const proyectosCoinciden =
     !!clientProjectId && !!serverProjectId && clientProjectId === serverProjectId;
+
+  // Detecta el caso concreto que teníamos: mismo proyecto pero con espacios/
+  // comillas de más en la variable del navegador.
+  const teniaEspacios = clientRaw != null && clientRaw !== clientProjectId;
 
   const diagnostico: Record<string, unknown> = {
     proyectoNavegador: clientProjectId,
     proyectoServidor: serverProjectId,
     proyectosCoinciden,
   };
+  if (proyectosCoinciden && teniaEspacios) {
+    diagnostico.nota =
+      "Se detectaron espacios o comillas de más en NEXT_PUBLIC_FIREBASE_PROJECT_ID. La app ahora los ignora automáticamente, pero conviene corregir la variable en Vercel para evitar problemas futuros.";
+  }
   if (!proyectosCoinciden && clientProjectId && serverProjectId) {
     diagnostico.PROBLEMA =
       `El navegador usa "${clientProjectId}" pero el servidor escribe en "${serverProjectId}". ` +
