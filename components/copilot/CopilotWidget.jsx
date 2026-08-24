@@ -58,9 +58,20 @@ const TEMAS = [
 
 // Sinónimos ES → tokens del catálogo (para el buscador del selector).
 const SYN = {
-  licuadora: ["blender"], batidora: ["blender", "mixer"], olla: ["pot", "cookware", "dutch", "saucepan", "stock", "casserole", "system"],
-  sarten: ["skillet", "pan", "saute", "paella", "grill"], cuchillo: ["knife", "cutlery"], filtro: ["filter", "fresca", "shower", "air"],
-  agua: ["water", "fresca"], jugo: ["juicer", "juice"], exprimidor: ["juicer"], cafe: ["espresso", "barista", "coffee"], te: ["tea", "expertea"],
+  licuadora: ["blender", "power"], batidora: ["blender", "mixer"], olla: ["pot", "cookware", "dutch", "saucepan", "stock", "casserole", "system"],
+  sarten: ["skillet", "pan", "saute", "paella", "grill"], sartenes: ["skillet", "pan"], cuchillo: ["knife", "cutlery"], cuchillos: ["knife", "cutlery"],
+  filtro: ["filter", "fresca", "shower", "air"], purificador: ["filter", "fresca", "air", "water"],
+  agua: ["water", "fresca"], jugo: ["juicer", "juice"], extractor: ["juicer", "extract"], exprimidor: ["juicer"],
+  cafe: ["espresso", "barista", "coffee"], cafetera: ["espresso", "barista", "coffee"], te: ["tea", "expertea"], tetera: ["tea", "expertea"],
+  vaporera: ["steamer", "steam"], plancha: ["griddle", "grill"], tapa: ["cover", "lid"], tabla: ["board", "cutting"],
+  juego: ["set", "system"], set: ["set", "system"], utensilios: ["utensil", "tool"], ducha: ["shower"], aire: ["air"],
+}
+
+// Reduce una palabra a su raíz aproximada (singular): licuadoras→licuadora, sets→set.
+function raiz(t) {
+  if (t.length > 4 && t.endsWith("es")) return t.slice(0, -2)
+  if (t.length > 3 && t.endsWith("s")) return t.slice(0, -1)
+  return t
 }
 
 function normal(s) {
@@ -215,16 +226,31 @@ export default function CopilotWidget({ getToken, customer, productos = [], cust
   // Resultados del selector de producto (búsqueda flexible sobre el catálogo).
   const q = normal(busqueda)
   const tokens = q.split(/\s+/).filter(Boolean)
-  const expandidos = new Set(tokens)
-  for (const t of tokens) for (const s of SYN[t] || []) expandidos.add(s)
+  // Expansión: cada palabra aporta su forma exacta, su raíz (singular) y sus
+  // sinónimos ES→EN. Basta con que UNA coincida para que el producto aparezca;
+  // cuantas más coincidan, más arriba sale. Así "licuadora", "blender max" o
+  // "power blender" encuentran lo mismo sin exigir el nombre exacto.
+  const expandidos = new Set()
+  for (const t of tokens) {
+    const r = raiz(t)
+    expandidos.add(t); expandidos.add(r)
+    for (const s of SYN[t] || []) expandidos.add(s)
+    for (const s of SYN[r] || []) expandidos.add(s)
+  }
   const catalogoFiltrado = (!q
     ? productos.slice(0, 40)
     : productos
         .map((p) => {
-          const hay = normal([p.name, p.category, p.line, p.productFamily].filter(Boolean).join(" "))
+          const hay = normal([p.name, p.category, p.line, p.productFamily, p.brand].filter(Boolean).join(" "))
+          const palabras = hay.split(/[^a-z0-9]+/).filter(Boolean)
           let score = 0
-          if (normal(p.name).includes(q)) score += 5
-          for (const t of expandidos) if (t && hay.includes(t)) score += 1
+          if (normal(p.name).includes(q)) score += 6
+          for (const t of expandidos) {
+            if (!t) continue
+            if (hay.includes(t)) { score += 2; continue }
+            // Prefijo: "licuad" encuentra "licuadora"; "blend" encuentra "blender".
+            if (t.length >= 3 && palabras.some((w) => w.startsWith(t) || t.startsWith(w))) score += 1
+          }
           return { p, score }
         })
         .filter((x) => x.score > 0)
