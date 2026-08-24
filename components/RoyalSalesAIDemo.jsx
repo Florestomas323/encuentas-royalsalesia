@@ -1517,19 +1517,16 @@ export default function RoyalSalesAIDemo() {
           })}
         </div>
 
-        {servicioAbierto && (
-          <ServiceSheet
-            servicio={servicioAbierto}
-            cliente={clientePorId(servicioAbierto.customerId)}
-            puedeCompletar={servicioAbierto.assignedSalespersonId === user?.uid || esManager}
-            esManager={esManager}
-            esMio={servicioAbierto.assignedSalespersonId === user?.uid}
-            procesando={completandoServicio}
-            onCerrar={() => setServicioAbierto(null)}
-            onCompletar={completarServicioHandler}
-            onAsignarme={asignarmeServicioHandler}
-          />
-        )}
+        <ServiceSheet
+          open={!!servicioAbierto}
+          service={servicioAbierto}
+          canComplete={!!servicioAbierto && (servicioAbierto.assignedSalespersonId === user?.uid || esManager)}
+          isManager={esManager}
+          loading={completandoServicio}
+          onClose={() => setServicioAbierto(null)}
+          onComplete={completarServicioHandler}
+          onAssignToMe={asignarmeServicioHandler}
+        />
       </Shell>
     );
   }
