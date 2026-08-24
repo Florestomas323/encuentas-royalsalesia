@@ -12,6 +12,15 @@ import { capabilitiesFor, classifyFamily } from "@/lib/catalog/classify";
 
 // Un id real del catálogo que usamos como marcador de "ya sembrado".
 const MARKER_ID = "elite-cooking-system-5";
+
+// El ID del documento lleva prefijo de organización para que dos organizaciones
+// puedan tener el catálogo a la vez sin pisarse (antes el id era global y la
+// última org en sembrar le "robaba" los productos a la otra). El campo `id`
+// interno del documento sigue siendo el id del catálogo, así que pieceIds y
+// parentSetIds se resuelven igual que siempre en memoria.
+function orgDocId(orgId: string, catalogId: string) {
+  return `${orgId}__${catalogId}`;
+}
 // Marcador del seed de EJEMPLO de la primera pasada (para limpiarlo).
 const OLD_EXAMPLE_MARKER = "elite-cooking-system";
 const BATCH_SIZE = 400; // < 500 por límite de writeBatch de Firestore.
@@ -39,10 +48,24 @@ export async function seedCatalogIfEmpty(ctx: Ctx): Promise<boolean> {
   const orgId = ctx?.profile?.organizationId;
   if (!orgId) return false;
 
-  // ¿Ya está el catálogo real? (lectura por id, sin índice)
-  const marker = await getDoc(doc(db, "products", MARKER_ID));
-  if (marker.exists() && (marker.data() as any)?.organizationId === orgId) {
+  // ¿Ya está el catálogo real para ESTA organización? (lectura por id, sin índice)
+  const marker = await getDoc(doc(db, "products", orgDocId(orgId, MARKER_ID)));
+  if (marker.exists()) {
     return false;
+  }
+
+  // Limpieza de una siembra anterior con ids globales (sin prefijo de org):
+  // borra los docs de esta org cuyo id de documento no lleve el prefijo, para
+  // no dejar duplicados al resembrar con el esquema nuevo.
+  const previos = await getDocs(query(
+    collection(db, "products"),
+    where("organizationId", "==", orgId),
+  ));
+  const sinPrefijo = previos.docs.filter((d) => !d.id.startsWith(`${orgId}__`));
+  for (let i = 0; i < sinPrefijo.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    for (const d of sinPrefijo.slice(i, i + BATCH_SIZE)) batch.delete(d.ref);
+    await batch.commit();
   }
 
   // Limpiar el seed de ejemplo de la primera pasada, si existe.
@@ -54,7 +77,7 @@ export async function seedCatalogIfEmpty(ctx: Ctx): Promise<boolean> {
     const batch = writeBatch(db);
     for (const p of CATALOG_PRODUCTS.slice(i, i + BATCH_SIZE)) {
       const caps = capabilitiesFor(p);
-      batch.set(doc(db, "products", p.id), {
+      batch.set(doc(db, "products", orgDocId(orgId, p.id)), {
         ...p,
         active: p.active !== false,
         // Capacidades de contenido calculadas por el clasificador (no por IA).
