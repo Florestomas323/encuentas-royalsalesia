@@ -1,6 +1,6 @@
 import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
-import { getGlobalPolicy, getWarrantyForProduct, searchWarranty } from "@/lib/warranty/lookup";
+import { getGlobalPolicy, getWarrantyForProduct } from "@/lib/warranty/lookup";
 import type { WarrantyKnowledge } from "@/lib/warranty/data";
 
 // Agregación de contexto para el Royal Copilot, 100% en el servidor con el
@@ -105,93 +105,202 @@ export async function getCustomerContextServer(
   ].filter(Boolean).join("\n");
 }
 
-// ---------- CONTEXTO DE PRODUCTO (catálogo + contenido aprobado) ----------
-// Detecta productos mencionados en el mensaje (o el producto de un cliente) y
-// devuelve su contenido oficial APROBADO, además de metadatos para garantías.
-export async function getProductContextServer(
-  orgId: string,
-  message: string
-): Promise<{ text: string | null; matched: { id: string; name: string; category?: string }[] }> {
-  const prodSnap = await adminDb().collection("products").where("organizationId", "==", orgId).get();
-  const productos = prodSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-  if (!productos.length) return { text: null, matched: [] };
+// ---------- IDENTIFICACIÓN FLEXIBLE DE PRODUCTO ----------
+export interface ProductMatch { id: string; name: string; category?: string }
 
-  const m = message.toLowerCase();
-  const matched = productos
-    .filter((p) => {
-      const name = String(p.name || "").toLowerCase();
-      if (name.length < 3) return false;
-      // Coincidencia por nombre completo o por palabras significativas del nombre.
-      if (m.includes(name)) return true;
-      const words = name.split(/\s+/).filter((w: string) => w.length > 3);
-      return words.some((w: string) => m.includes(w));
+// Normaliza texto para comparar (minúsculas, sin acentos).
+function norm(s: any): string {
+  return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+// Sinónimos ES genéricos → tokens que aparecen en el catálogo real (mezcla
+// inglés/español). Permite que "la licuadora" encuentre "Power Blender".
+const SYNONYMS: Record<string, string[]> = {
+  licuadora: ["blender"],
+  batidora: ["blender", "mixer"],
+  olla: ["pot", "cookware", "dutch", "saucepan", "stock", "casserole", "sistema", "system"],
+  presion: ["pressure", "presion"],
+  sarten: ["skillet", "pan", "saute", "paella", "grill"],
+  paellera: ["paella"],
+  cuchillo: ["knife", "cutlery"],
+  cuchillos: ["knife", "cutlery"],
+  cubiertos: ["cutlery", "flatware"],
+  filtro: ["filter", "fresca", "frescapure", "frescaflow", "shower", "air"],
+  agua: ["water", "fresca", "filter"],
+  jugo: ["juicer", "juice", "exprimidor"],
+  exprimidor: ["juicer", "exprimidor"],
+  jugos: ["juicer", "juice"],
+  cafe: ["espresso", "barista", "coffee", "expertea"],
+  cafetera: ["espresso", "barista", "coffee"],
+  te: ["expertea", "tea"],
+  vaso: ["cup", "glass", "vaso", "copa"],
+  copa: ["copa", "glass", "cup"],
+  jarra: ["jarra", "pitcher", "jug", "tritan"],
+  tabla: ["cutting", "tabla"],
+  sartenes: ["skillet", "pan"],
+};
+
+const STOP = new Set(["para", "sobre", "cual", "cuales", "producto", "productos", "garantia", "beneficios", "beneficio", "explicame", "explica", "dame", "quiero", "necesito", "royal", "prestige", "que", "los", "las", "del", "con", "una", "uno", "este", "esta"]);
+
+// Puntúa cada producto de la org contra el mensaje. Devuelve candidatos
+// ordenados por relevancia (mayor score primero).
+function scoreProducts(productos: any[], message: string): { p: any; score: number }[] {
+  const m = norm(message);
+  const tokens = m.split(/\s+/).filter((t) => t.length > 2 && !STOP.has(t));
+  // Expandir tokens con sinónimos.
+  const expanded = new Set<string>(tokens);
+  for (const t of tokens) for (const syn of SYNONYMS[t] || []) expanded.add(syn);
+
+  return productos
+    .map((p) => {
+      const name = norm(p.name);
+      const hay = [name, norm(p.category), norm(p.line), norm(p.productFamily)].join(" ");
+      let score = 0;
+      if (name && m.includes(name)) score += 10; // nombre completo mencionado
+      for (const t of expanded) {
+        if (!t) continue;
+        if (name.split(/\s+/).includes(t)) score += 3;
+        else if (hay.includes(t)) score += 1;
+      }
+      return { p, score };
     })
-    .slice(0, 3);
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+}
 
-  if (!matched.length) return { text: null, matched: [] };
-
-  // Contenido oficial APROBADO de los productos coincidentes.
-  const bloques: string[] = [];
-  for (const p of matched) {
-    const cSnap = await adminDb()
-      .collection("productContent")
-      .where("organizationId", "==", orgId)
-      .where("productId", "==", p.id)
-      .where("status", "==", "approved")
-      .get();
-    const items = cSnap.docs.map((d) => d.data() as any);
-    if (items.length) {
-      const txt = items.map((it) => `• (${it.type}) ${it.title}: ${it.content}`).join("\n");
-      bloques.push(`Producto "${p.name}"${p.category ? ` [${p.category}]` : ""}:\n${txt}`);
-    } else {
-      bloques.push(`Producto "${p.name}"${p.category ? ` [${p.category}]` : ""}: (sin contenido oficial aprobado todavía)`);
-    }
+// ---------- CONTEXTO DE PRODUCTO (CAPA 1 products + CAPA 2 productContent) ----------
+// CAPA 1 (primaria): datos oficiales del catálogo (products). CAPA 2: contenido
+// adicional aprobado (productContent). El Copilot responde con lo que exista en
+// CAPA 1 aunque CAPA 2 esté vacía; solo dice "no tengo info" si ninguna la tiene.
+function buildProductText(p: any, byId: Map<string, any>, approved: any[]): string {
+  const l: string[] = [];
+  l.push(`DATOS DE CATÁLOGO (CAPA 1 — fuente oficial primaria)`);
+  l.push(`Producto: ${p.name}`);
+  const meta = [p.brand && `Marca: ${p.brand}`, p.line && `Línea: ${p.line}`, p.category && `Categoría: ${p.category}`].filter(Boolean);
+  if (meta.length) l.push(meta.join(" · "));
+  l.push(`Tipo: ${p.type === "set" ? "Set (paquete con piezas)" : "Producto individual"}`);
+  if (Array.isArray(p.pieceIds) && p.pieceIds.length) {
+    const piezas = p.pieceIds.map((id: string) => byId.get(id)?.name || id).filter(Boolean);
+    if (piezas.length) l.push(`Incluye: ${piezas.join(", ")}`);
   }
+  if (Array.isArray(p.features) && p.features.length) l.push(`Características (catálogo): ${p.features.join("; ")}`);
+  if (p.warranty) l.push(`Garantía (catálogo): ${p.warranty}`);
+  if (p.requiresPostSaleService) l.push(`Servicio postventa: requerido${p.postSaleServiceType ? ` (${p.postSaleServiceType})` : ""}`);
+  if (p.notes) l.push(`Notas: ${p.notes}`);
 
+  if (approved.length) {
+    l.push(`\nCONTENIDO APROBADO (CAPA 2 — recetas/tips/cuidados/FAQ):`);
+    for (const it of approved) l.push(`• (${it.type}) ${it.title}: ${it.content || ""}`);
+  } else {
+    l.push(`\n(CAPA 2: sin contenido adicional aprobado todavía — responde con CAPA 1.)`);
+  }
+  return l.join("\n");
+}
+
+async function loadOrgProducts(orgId: string) {
+  const snap = await adminDb().collection("products").where("organizationId", "==", orgId).get();
+  const arr = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  const byId = new Map(arr.map((p) => [p.id, p]));
+  return { arr, byId };
+}
+
+async function approvedContent(orgId: string, productId: string) {
+  const snap = await adminDb()
+    .collection("productContent")
+    .where("organizationId", "==", orgId)
+    .where("productId", "==", productId)
+    .where("status", "==", "approved")
+    .get();
+  return snap.docs.map((d) => d.data() as any);
+}
+
+// Contexto por productId EXPLÍCITO (el vendedor lo eligió en el selector).
+export async function getProductContextById(
+  orgId: string,
+  productId: string
+): Promise<{ text: string | null; matched: ProductMatch[] }> {
+  const { byId } = await loadOrgProducts(orgId);
+  const p = byId.get(productId);
+  if (!p) return { text: null, matched: [] };
+  const approved = await approvedContent(orgId, productId);
   return {
-    text: bloques.join("\n\n"),
-    matched: matched.map((p) => ({ id: p.id, name: p.name, category: p.category })),
+    text: buildProductText(p, byId, approved),
+    matched: [{ id: p.id, name: p.name, category: p.category }],
   };
 }
 
-// ---------- CONTEXTO DE GARANTÍA (conocimiento oficial global) ----------
-function formatWarranty(w: WarrantyKnowledge): string {
-  const partes = [`GARANTÍA — ${w.productName}: ${w.coverageSummary}`];
-  if (w.componentCoverage?.length) {
-    partes.push("Cobertura por componente: " + w.componentCoverage.map((c) => `${c.component} (${c.period})`).join("; ") + ".");
+// Contexto por TEXTO LIBRE. Devuelve el contexto si hay un único match claro,
+// o `candidates` para desambiguar cuando hay varios plausibles.
+export async function getProductContextServer(
+  orgId: string,
+  message: string
+): Promise<{ text: string | null; matched: ProductMatch[]; candidates: ProductMatch[] }> {
+  const { arr, byId } = await loadOrgProducts(orgId);
+  if (!arr.length) return { text: null, matched: [], candidates: [] };
+
+  const scored = scoreProducts(arr, message);
+  if (!scored.length) return { text: null, matched: [], candidates: [] };
+
+  // Un solo match claro: score dominante o único resultado.
+  const top = scored[0];
+  const second = scored[1];
+  const claro = !second || top.score >= second.score + 3 || top.score >= 10;
+
+  if (claro) {
+    const approved = await approvedContent(orgId, top.p.id);
+    return {
+      text: buildProductText(top.p, byId, approved),
+      matched: [{ id: top.p.id, name: top.p.name, category: top.p.category }],
+      candidates: [],
+    };
   }
-  if (w.conditions?.length) partes.push("Condiciones: " + w.conditions.join(" ") );
+
+  // Varios plausibles: pedir al vendedor que elija (sin llamar a la IA).
+  const candidates = scored.slice(0, 5).map((x) => ({ id: x.p.id, name: x.p.name, category: x.p.category }));
+  return { text: null, matched: [], candidates };
+}
+
+// ---------- CONTEXTO DE GARANTÍA (un producto a la vez) ----------
+function formatWarranty(w: WarrantyKnowledge, label: string): string {
+  const partes = [`${label}: ${w.productName}`, `Cobertura: ${w.coverageSummary}`];
+  if (w.componentCoverage?.length) {
+    partes.push("Cobertura por componente:\n" + w.componentCoverage.map((c) => `  - ${c.component}: ${c.period}`).join("\n"));
+  }
+  if (w.conditions?.length) partes.push("Condiciones importantes: " + w.conditions.join(" "));
   if (w.exclusions?.length) partes.push("Exclusiones: " + w.exclusions.join(" "));
-  if (w.claimRequirements?.length) partes.push("Reclamo: " + w.claimRequirements.join(" "));
+  if (w.claimRequirements?.length) partes.push("Para iniciar un reclamo: " + w.claimRequirements.join(" "));
+  partes.push(`Fuente oficial: ${w.officialSourceUrl}`);
   return partes.join("\n");
 }
 
+// Garantía de UN producto conocido: registro específico como respuesta
+// principal + política global SOLO como condiciones generales complementarias.
 export async function getWarrantyContextServer(
-  message: string,
-  matchedProducts: { id: string; name: string; category?: string }[]
+  matchedProducts: ProductMatch[]
 ): Promise<string | null> {
+  if (!matchedProducts.length) return null;
+  const target = matchedProducts[0];
   const bloques: string[] = [];
 
-  // La política global aplica SIEMPRE en temas de garantía.
+  const specific = await getWarrantyForProduct(target.id, target.category);
+  if (specific.length) {
+    // Registro específico del producto (el primero es el más directo).
+    bloques.push(formatWarranty(specific[0], "GARANTÍA ESPECÍFICA DEL PRODUCTO"));
+  } else {
+    bloques.push(
+      `GARANTÍA ESPECÍFICA DEL PRODUCTO: ${target.name}\n(No hay un registro específico para este producto; aplica la política general de garantía a continuación.)`
+    );
+  }
+
   const global = await getGlobalPolicy();
-  if (global) bloques.push(formatWarranty(global));
+  if (global) bloques.push(formatWarranty(global, "POLÍTICA GENERAL (complementaria, NO es la garantía específica)"));
 
-  // Garantía específica de los productos mencionados.
-  const vistos = new Set<string>();
-  for (const p of matchedProducts) {
-    const ws = await getWarrantyForProduct(p.id, p.category);
-    for (const w of ws) {
-      if (!vistos.has(w.id)) { vistos.add(w.id); bloques.push(formatWarranty(w)); }
-    }
-  }
+  return bloques.join("\n\n");
+}
 
-  // Si no se identificó producto, busca por texto libre.
-  if (matchedProducts.length === 0) {
-    const ws = await searchWarranty(message, 3);
-    for (const w of ws) {
-      if (!vistos.has(w.id)) { vistos.add(w.id); bloques.push(formatWarranty(w)); }
-    }
-  }
-
-  return bloques.length ? bloques.join("\n\n") : null;
+// Reglas generales de garantía (solo cuando el vendedor pregunta explícitamente
+// por la política general, sin un producto concreto).
+export async function getGeneralWarrantyContext(): Promise<string | null> {
+  const global = await getGlobalPolicy();
+  return global ? formatWarranty(global, "POLÍTICA GENERAL DE GARANTÍA") : null;
 }

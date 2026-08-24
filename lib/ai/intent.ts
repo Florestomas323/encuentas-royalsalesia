@@ -29,8 +29,28 @@ const RE = {
   customer: /(cliente|qu[eé] (hago|le digo)|pr[oó]ximo paso|seguimiento|contactar|c[oó]mo cierro|este cliente)/i,
 };
 
-export function classifyIntent(message: string, hasCustomerContext: boolean): IntentResult {
+// Flujos guiados desde el widget (el vendedor tocó un botón). Cuando llegan,
+// NO adivinamos la intención por texto: la respetamos tal cual para no caer en
+// defaults incorrectos (p. ej. asumir "precio" en objeciones).
+export type CopilotFlow = "objection" | "product" | "warranty";
+
+export function classifyIntent(
+  message: string,
+  hasCustomerContext: boolean,
+  flow?: CopilotFlow | null
+): IntentResult {
   const m = message || "";
+
+  // Flujo explícito desde el widget: manda sobre la heurística.
+  if (flow === "warranty") {
+    return { intent: "warranty", tier: "fast", needsCustomer: hasCustomerContext, needsWarranty: true, needsProduct: true };
+  }
+  if (flow === "objection") {
+    return { intent: "objection", tier: "smart", needsCustomer: hasCustomerContext, needsWarranty: false, needsProduct: true };
+  }
+  if (flow === "product") {
+    return { intent: "product", tier: "fast", needsCustomer: false, needsWarranty: false, needsProduct: true };
+  }
 
   // Orden de prioridad: garantía y objeción son los de mayor valor y ambigüedad.
   if (RE.warranty.test(m)) {

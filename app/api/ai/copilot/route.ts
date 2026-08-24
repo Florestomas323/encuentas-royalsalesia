@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { runAIJSON } from "@/lib/ai/openai";
-import { classifyIntent } from "@/lib/ai/intent";
+import { classifyIntent, type CopilotFlow } from "@/lib/ai/intent";
 import { COPILOT_SYSTEM, copilotPrompt } from "@/lib/ai/prompts/copilot";
 import { validateCopilotAnswer } from "@/lib/ai/validateCopilot";
 import {
   getCustomerContextServer,
   getProductContextServer,
+  getProductContextById,
   getWarrantyContextServer,
+  getGeneralWarrantyContext,
+  type ProductMatch,
 } from "@/lib/ai/copilotContext";
 
 export const runtime = "nodejs";
@@ -70,8 +73,19 @@ export async function POST(req: Request) {
   const currency = typeof body?.currency === "string" ? body.currency : "COP";
   const locale = typeof body?.locale === "string" ? body.locale : "es-CO";
 
+  // Campos de flujos guiados (el vendedor eligió en el widget). Resolvemos el
+  // producto/objeción en código para no depender de que la IA adivine.
+  const productId = typeof body?.productId === "string" ? body.productId.slice(0, 120) : "";
+  const objection = typeof body?.objection === "string" ? body.objection.trim().slice(0, 300) : "";
+  const topic = typeof body?.topic === "string" ? body.topic.trim().slice(0, 60) : "";
+  const flow: CopilotFlow | null =
+    body?.flow === "objection" || body?.flow === "product" || body?.flow === "warranty" ? body.flow : null;
+
   const hasCustomer = !!customerId;
-  const intent = classifyIntent(message, hasCustomer);
+  const intent = classifyIntent(message, hasCustomer, flow);
+
+  // ¿El vendedor pide explícitamente las REGLAS GENERALES de garantía?
+  const wantsGeneralWarranty = /(reglas|pol[ií]tica|condiciones)\s+generales|garant[ií]a\s+general|en general/i.test(message);
 
   try {
     // 4. Rehidratar SOLO el contexto que la intención necesita (menos tokens,
@@ -81,17 +95,61 @@ export async function POST(req: Request) {
       customerContext = await getCustomerContextServer(orgId, customerId, { onlyTestData });
     }
 
+    // Resolver el producto PRIMERO en código/Firestore (sin IA):
+    //  - si el vendedor eligió un productId explícito, lo usamos directo;
+    //  - si no, búsqueda flexible por texto. Si hay varios candidatos, pedimos
+    //    que elija; si no hay ninguno y se necesita producto, pedimos producto.
     let productContext: string | null = null;
-    let matched: { id: string; name: string; category?: string }[] = [];
-    if (intent.needsProduct) {
+    let matched: ProductMatch[] = [];
+    if (productId) {
+      const p = await getProductContextById(orgId, productId);
+      productContext = p.text;
+      matched = p.matched;
+    } else if (intent.needsProduct) {
       const p = await getProductContextServer(orgId, message);
       productContext = p.text;
       matched = p.matched;
+
+      // Desambiguación (p. ej. "la licuadora" con Max y Go): preguntar sin IA.
+      if (!matched.length && p.candidates.length > 1) {
+        return NextResponse.json({
+          ok: true,
+          intent: intent.intent,
+          conversationId: conversationId || null,
+          result: {
+            answer: "¿Cuál producto quieres consultar?",
+            actions: [],
+            sources: [],
+            disclaimer: "",
+            choices: p.candidates.map((c) => ({ id: c.id, name: c.name })),
+          },
+        });
+      }
     }
 
+    // Garantía: SIEMPRE sobre un producto. Si no hay producto identificado y no
+    // se pidieron reglas generales, pedimos el producto (sin IA, sin política
+    // general suelta).
     let warrantyContext: string | null = null;
     if (intent.needsWarranty) {
-      warrantyContext = await getWarrantyContextServer(message, matched);
+      if (wantsGeneralWarranty && !matched.length) {
+        warrantyContext = await getGeneralWarrantyContext();
+      } else if (matched.length) {
+        warrantyContext = await getWarrantyContextServer(matched);
+      } else {
+        return NextResponse.json({
+          ok: true,
+          intent: intent.intent,
+          conversationId: conversationId || null,
+          result: {
+            answer: "Claro. ¿De qué producto quieres consultar la garantía?",
+            actions: [],
+            sources: [],
+            disclaimer: "",
+            askProduct: true,
+          },
+        });
+      }
     }
 
     // 5. Una sola llamada al modelo (nivel según intención) para la respuesta.
@@ -102,6 +160,8 @@ export async function POST(req: Request) {
       customerContext,
       warrantyContext,
       productContext,
+      objection: objection || null,
+      topic: topic || null,
       currency,
       locale,
     });

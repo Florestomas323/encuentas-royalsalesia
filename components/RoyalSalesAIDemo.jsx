@@ -788,6 +788,15 @@ export default function RoyalSalesAIDemo() {
     <CopilotWidget
       getToken={() => auth.currentUser?.getIdToken()}
       customer={screen === "fichaCliente" ? fichaCliente : null}
+      productos={productos}
+      customerProducts={
+        screen === "fichaCliente"
+          ? (ficha360?.items || []).map((it) => ({
+              id: it.productId,
+              name: it.productNameSnapshot,
+            }))
+          : []
+      }
       onNavigate={navegarDesdeCopilot}
       onToast={mostrarToast}
     />
