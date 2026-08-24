@@ -52,6 +52,11 @@ export default function CopilotWidget({ getToken, customer, onNavigate, onToast 
     const pregunta = (texto ?? input).trim()
     if (!pregunta || cargando) return
     setInput("")
+    // Historial reciente (para continuidad) a partir de lo ya mostrado.
+    const historial = mensajes.slice(-6).map((m) => ({
+      role: m.role,
+      content: m.text,
+    }))
     setMensajes((m) => [...m, { role: "user", text: pregunta }])
     setCargando(true)
     try {
@@ -61,25 +66,31 @@ export default function CopilotWidget({ getToken, customer, onNavigate, onToast 
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          question: pregunta,
+          message: pregunta,
           customerId: contextoCliente?.id || null,
           conversationId,
+          history: historial,
         }),
       })
-      if (!res.ok) throw new Error(`http-${res.status}`)
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `http-${res.status}`)
+      }
+      const r = data.result || {}
       if (data.conversationId) setConversationId(data.conversationId)
       setMensajes((m) => [...m, {
         role: "assistant",
-        text: data.answer || "No pude generar una respuesta.",
-        actions: Array.isArray(data.actions) ? data.actions : [],
-        sources: Array.isArray(data.sources) ? data.sources : [],
-        disclaimer: data.disclaimer || null,
+        text: r.answer || "No pude generar una respuesta.",
+        actions: Array.isArray(r.actions) ? r.actions : [],
+        sources: Array.isArray(r.sources) ? r.sources : [],
+        disclaimer: r.disclaimer || null,
       }])
     } catch (e) {
       setMensajes((m) => [...m, {
         role: "assistant",
-        text: "No pude responder en este momento. Revisa tu conexión e inténtalo de nuevo.",
+        text: e?.message && !String(e.message).startsWith("http-") && e.message !== "sin-sesion"
+          ? e.message
+          : "No pude responder en este momento. Revisa tu conexión e inténtalo de nuevo.",
         actions: [], sources: [],
       }])
     } finally {
@@ -99,11 +110,17 @@ export default function CopilotWidget({ getToken, customer, onNavigate, onToast 
     } catch { onToast?.("No se pudo copiar.") }
   }
 
-  // Acción de navegación devuelta por el servidor (p. ej. abrir seguimientos).
+  // Acción devuelta por el servidor: { label, screen, note }. Si trae una
+  // pantalla de la lista blanca, navegamos; si solo trae nota, la copiamos
+  // (útil para borradores de mensaje que el vendedor pega en WhatsApp).
   function ejecutarAccion(a) {
     if (!a) return
-    if (a.type === "navigate" && a.screen) { setAbierto(false); onNavigate?.(a.screen, a.payload) }
-    else if (a.type === "copy" && a.text) copiar(a.text, `act-${a.text.slice(0, 8)}`)
+    if (a.screen) {
+      setAbierto(false)
+      onNavigate?.(a.screen, contextoCliente?.id ? { customerId: contextoCliente.id } : undefined)
+    } else if (a.note) {
+      copiar(a.note, `act-${(a.label || a.note).slice(0, 8)}`)
+    }
   }
 
   const accionesVisibles = ACCIONES.filter((a) => a.needs === "none" || contextoCliente)
@@ -221,16 +238,20 @@ export default function CopilotWidget({ getToken, customer, onNavigate, onToast 
                     {/* Botones de acción sugeridos por el servidor */}
                     {m.actions?.length > 0 && (
                       <div className="mt-2.5 flex flex-wrap gap-2">
-                        {m.actions.map((a, j) => (
-                          <button
-                            key={j}
-                            onClick={() => ejecutarAccion(a)}
-                            className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-brand-dark bg-brand/[0.06] border border-brand/15 rounded-full px-3 py-1.5 active:bg-brand/10"
-                          >
-                            {a.type === "copy" ? (copiado === `act-${(a.text || "").slice(0, 8)}` ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />) : <ArrowRight className="w-3.5 h-3.5" />}
-                            {a.label}
-                          </button>
-                        ))}
+                        {m.actions.map((a, j) => {
+                          const esCopia = !a.screen && a.note
+                          const key = `act-${(a.label || a.note || "").slice(0, 8)}`
+                          return (
+                            <button
+                              key={j}
+                              onClick={() => ejecutarAccion(a)}
+                              className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-brand-dark bg-brand/[0.06] border border-brand/15 rounded-full px-3 py-1.5 active:bg-brand/10"
+                            >
+                              {esCopia ? (copiado === key ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />) : <ArrowRight className="w-3.5 h-3.5" />}
+                              {a.label}
+                            </button>
+                          )
+                        })}
                       </div>
                     )}
 
