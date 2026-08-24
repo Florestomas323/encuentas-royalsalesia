@@ -9,12 +9,13 @@ import {
 import type { Ctx } from "@/lib/db/services";
 import type { Product, ProductContent } from "@/lib/catalog/types";
 
-function bySortOrder<T extends { sortOrder?: number; name?: string; title?: string }>(rows: T[]): T[] {
+// Orden en memoria (sin índices Firestore): sets primero, luego alfabético.
+function bySortOrder<T extends { type?: string; name?: string; title?: string }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => {
-    const sa = a.sortOrder ?? 9999;
-    const sb = b.sortOrder ?? 9999;
+    const sa = a.type === "set" ? 0 : 1;
+    const sb = b.type === "set" ? 0 : 1;
     if (sa !== sb) return sa - sb;
-    return String(a.name ?? a.title ?? "").localeCompare(String(b.name ?? b.title ?? ""));
+    return String(a.name ?? a.title ?? "").localeCompare(String(b.name ?? b.title ?? ""), "es");
   });
 }
 
@@ -102,7 +103,8 @@ export function resolveOwnedPieces(
     const prod = productsById[it.productId];
     const pieces = it.pieceIdsSnapshot?.length ? it.pieceIdsSnapshot : prod?.pieceIds || [];
     for (const pid of pieces) ownedPieceIds.add(pid);
-    if (prod?.kind === "piece") ownedPieceIds.add(it.productId);
+    // Un producto individual comprado (no-set) cuenta como pieza poseída.
+    if (prod && prod.type !== "set") ownedPieceIds.add(it.productId);
   }
   return { ownedProductIds, ownedPieceIds };
 }

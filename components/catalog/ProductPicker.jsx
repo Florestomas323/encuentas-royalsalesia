@@ -5,7 +5,7 @@ import { Search, Package, Boxes, Check, Plus, Minus } from "lucide-react";
 
 /**
  * Selector de productos del catálogo con cantidad.
- * - products: array de { id, name, kind, sku, price, pieceIds }
+ * - products: array de { id, name, type, line, category, brand, pieceIds }
  * - value: array de items seleccionados { productId, productNameSnapshot, quantity, unitPrice, pieceIdsSnapshot }
  * - onChange(items)
  * - allowFreeText: si el catálogo está vacío, permite seguir con texto libre
@@ -24,7 +24,9 @@ export default function ProductPicker({
   const filtrados = useMemo(() => {
     const t = q.trim().toLowerCase();
     if (!t) return products;
-    return products.filter((p) => `${p.name} ${p.sku || ""}`.toLowerCase().includes(t));
+    return products.filter((p) =>
+      `${p.name} ${p.line || ""} ${p.category || ""} ${p.brand || ""}`.toLowerCase().includes(t)
+    );
   }, [q, products]);
 
   const cantidadDe = (id) => value.find((v) => v.productId === id)?.quantity || 0;
@@ -36,8 +38,8 @@ export default function ProductPicker({
         productId: prod.id,
         productNameSnapshot: prod.name,
         quantity: cantidad,
-        unitPrice: typeof prod.price === "number" ? prod.price : undefined,
-        pieceIdsSnapshot: prod.kind === "set" ? prod.pieceIds || [] : [],
+        unitPrice: undefined, // el catálogo real no trae precio; queda manual/opcional
+        pieceIdsSnapshot: prod.type === "set" ? prod.pieceIds || [] : [],
       });
     }
     onChange?.(next);
@@ -85,7 +87,7 @@ export default function ProductPicker({
           filtrados.map((p) => {
             const cant = cantidadDe(p.id);
             const activo = cant > 0;
-            const esSet = p.kind === "set";
+            const esSet = p.type === "set";
             return (
               <div
                 key={p.id}
@@ -106,8 +108,7 @@ export default function ProductPicker({
                     )}
                   </div>
                   <p className="text-[12px] text-muted truncate">
-                    {p.sku ? p.sku : ""}
-                    {typeof p.price === "number" && p.price > 0 ? `${p.sku ? " · " : ""}$${p.price}` : ""}
+                    {[p.line, p.category].filter(Boolean).join(" · ")}
                   </p>
                 </div>
 

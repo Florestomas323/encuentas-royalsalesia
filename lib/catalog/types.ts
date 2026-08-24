@@ -1,44 +1,64 @@
-// Tipos del catálogo de productos (Fase A).
-// El catálogo es compartido a nivel organización: NO lleva isTestData.
+// Tipos del catálogo de productos (Fase A) — alineados al catálogo REAL
+// (Royal Prestige, 179 productos). El catálogo es compartido a nivel
+// organización: NO lleva isTestData.
 
-export type ProductKind = "set" | "piece" | "single";
+/** "set" = paquete con piezas; "individual_product" = producto suelto. */
+export type ProductType = "set" | "individual_product";
 
-export interface Product {
+/**
+ * CatalogProduct = esquema tal cual viene del archivo fuente (lib/catalog/data.ts).
+ * No inventamos campos: son exactamente los que trae el catálogo real.
+ */
+export interface CatalogProduct {
   id: string;
-  organizationId: string;
-  /** Nombre visible del producto, ej. "Elite Cooking System". */
   name: string;
-  kind: ProductKind;
-  /** SKU o código interno opcional. */
-  sku?: string;
-  /** Precio de referencia (puede sobreescribirse al vender). */
-  price?: number;
-  /** Descripción corta para mostrar en el selector y la ficha. */
-  description?: string;
-  /**
-   * Si kind === "set": ids de los productos "piece" que componen el set.
-   * Permite, tras vender un set, saber qué piezas ya tiene el cliente.
-   */
-  pieceIds?: string[];
-  /** Orden de aparición en el selector (menor primero). */
-  sortOrder?: number;
+  brand?: string | null;
+  line?: string | null;
+  category?: string | null;
+  type: ProductType;
   active?: boolean;
+  canSellIndividually?: boolean;
+  /** Si type === "set": ids de los productos que componen el set. */
+  pieceIds?: string[];
+  /** Si es pieza de uno o varios sets: ids de esos sets. */
+  parentSetIds?: string[];
+  requiresPostSaleService?: boolean;
+  postSaleServiceType?: string | null;
+  keepPackagedUntilService?: boolean;
+  serviceChecklist?: string[];
+  postServiceContentTags?: string[];
+  features?: string[];
+  warranty?: string | null;
+  notes?: string | null;
+  sourceType?: string | null;
+  sourcePage?: number | string | null;
+}
+
+/**
+ * Product = documento del catálogo ya en Firestore: el catálogo real más los
+ * campos que añade el seed al escribirlo por organización.
+ */
+export interface Product extends CatalogProduct {
+  organizationId: string;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
 
+/**
+ * ProductContent: modelo RESERVADO para la Fase C (recetas, tips, cuidado).
+ * NO se siembra en Fase A porque el catálogo real no incluye contenido oficial.
+ */
 export interface ProductContent {
   id: string;
   organizationId: string;
-  /** Producto o pieza al que pertenece este contenido. */
   productId: string;
-  /** "recipe" | "tip" | "care" | "video" ... extensible en fases futuras. */
   type: string;
   title: string;
-  body?: string;
-  url?: string;
-  sortOrder?: number;
+  content?: string;
+  tags?: string[];
+  active?: boolean;
   createdAt?: unknown;
+  updatedAt?: unknown;
 }
 
 export interface PurchaseItem {
@@ -47,11 +67,12 @@ export interface PurchaseItem {
   isTestData: boolean;
   purchaseId: string;
   customerId: string;
+  visitId?: string;
   productId: string;
   /** Snapshot del nombre al momento de la venta (sobrevive a cambios del catálogo). */
   productNameSnapshot: string;
   quantity: number;
-  unitPrice?: number;
+  unitPrice?: number | null;
   /** Si el item vendido es un set, las piezas que incluye (snapshot de pieceIds). */
   pieceIdsSnapshot?: string[];
   createdBy?: string;

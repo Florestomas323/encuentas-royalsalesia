@@ -1,92 +1,68 @@
-// Seed idempotente del catálogo de ejemplo (Fase A).
-// Precarga el "Elite Cooking System" (set de 5 piezas) y algo de contenido.
+// Seed idempotente del catálogo REAL (Royal Prestige, 179 productos).
 // El catálogo es compartido por organización, así que se siembra una sola vez
-// por organizationId. No borra ni sobreescribe datos existentes.
+// por organizationId. Usa el id del catálogo como ID de documento para evitar
+// duplicados y para que pieceIds / parentSetIds resuelvan directamente.
 import { db } from "@/lib/firebase/client";
 import {
-  addDoc, collection, getDocs, query, serverTimestamp, where, writeBatch, doc,
+  collection, doc, getDoc, getDocs, query, serverTimestamp, where, writeBatch,
 } from "firebase/firestore";
 import type { Ctx } from "@/lib/db/services";
+import { CATALOG_PRODUCTS } from "@/lib/catalog/data";
 
-const SEED_MARKER = "elite-cooking-system";
+// Un id real del catálogo que usamos como marcador de "ya sembrado".
+const MARKER_ID = "elite-cooking-system-5";
+// Marcador del seed de EJEMPLO de la primera pasada (para limpiarlo).
+const OLD_EXAMPLE_MARKER = "elite-cooking-system";
+const BATCH_SIZE = 400; // < 500 por límite de writeBatch de Firestore.
 
-const PIEZAS = [
-  { name: "Olla 6L con tapa", sku: "ELITE-OLLA-6L", sortOrder: 11 },
-  { name: "Sartén 24cm", sku: "ELITE-SARTEN-24", sortOrder: 12 },
-  { name: "Cacerola 2L", sku: "ELITE-CACEROLA-2L", sortOrder: 13 },
-  { name: "Tapa universal", sku: "ELITE-TAPA-UNIV", sortOrder: 14 },
-  { name: "Vaporera", sku: "ELITE-VAPORERA", sortOrder: 15 },
-];
+/** Elimina en lotes docs de una colección que tengan el seedKey de ejemplo. */
+async function deleteOldExample(orgId: string, coll: string) {
+  const snap = await getDocs(query(
+    collection(db, coll),
+    where("organizationId", "==", orgId),
+    where("seedKey", "==", OLD_EXAMPLE_MARKER),
+  ));
+  if (snap.empty) return;
+  for (let i = 0; i < snap.docs.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    for (const d of snap.docs.slice(i, i + BATCH_SIZE)) batch.delete(d.ref);
+    await batch.commit();
+  }
+}
 
 /**
- * Siembra el catálogo de ejemplo si la organización aún no tiene productos.
+ * Siembra el catálogo real si la organización aún no lo tiene.
  * Devuelve true si sembró, false si ya existía (idempotente).
  */
 export async function seedCatalogIfEmpty(ctx: Ctx): Promise<boolean> {
-  if (!ctx?.profile?.organizationId) return false;
+  const orgId = ctx?.profile?.organizationId;
+  if (!orgId) return false;
 
-  // ¿Ya existe el producto marcado como seed? Solo igualdad -> sin índice.
-  const existing = await getDocs(query(
-    collection(db, "products"),
-    where("organizationId", "==", ctx.profile.organizationId),
-    where("seedKey", "==", SEED_MARKER),
-  ));
-  if (!existing.empty) return false;
-
-  const orgBase = {
-    organizationId: ctx.profile.organizationId,
-    active: true,
-    createdBy: ctx.uid,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-
-  // 1) Crear las piezas primero para obtener sus ids.
-  const pieceIds: string[] = [];
-  for (const p of PIEZAS) {
-    const ref = await addDoc(collection(db, "products"), {
-      ...orgBase,
-      name: p.name,
-      sku: p.sku,
-      kind: "piece",
-      sortOrder: p.sortOrder,
-      seedKey: SEED_MARKER,
-    });
-    pieceIds.push(ref.id);
+  // ¿Ya está el catálogo real? (lectura por id, sin índice)
+  const marker = await getDoc(doc(db, "products", MARKER_ID));
+  if (marker.exists() && (marker.data() as any)?.organizationId === orgId) {
+    return false;
   }
 
-  // 2) Crear el set que referencia las piezas.
-  const setRef = await addDoc(collection(db, "products"), {
-    ...orgBase,
-    name: "Elite Cooking System",
-    sku: "ELITE-SET",
-    kind: "set",
-    description: "Batería de cocina Elite de 5 piezas.",
-    pieceIds,
-    price: 0,
-    sortOrder: 1,
-    seedKey: SEED_MARKER,
-  });
+  // Limpiar el seed de ejemplo de la primera pasada, si existe.
+  await deleteOldExample(orgId, "products");
+  await deleteOldExample(orgId, "productContent");
 
-  // 3) Contenido de ejemplo (recetas) asociado al set.
-  const batch = writeBatch(db);
-  const recetas = [
-    { title: "Arroz perfecto en olla Elite", type: "recipe", sortOrder: 1 },
-    { title: "Vegetales al vapor", type: "recipe", sortOrder: 2 },
-  ];
-  for (const r of recetas) {
-    batch.set(doc(collection(db, "productContent")), {
-      organizationId: ctx.profile.organizationId,
-      productId: setRef.id,
-      type: r.type,
-      title: r.title,
-      sortOrder: r.sortOrder,
-      seedKey: SEED_MARKER,
-      createdBy: ctx.uid,
-      createdAt: serverTimestamp(),
-    });
+  // Escribir los 179 productos reales en lotes. El id de doc = id del catálogo.
+  for (let i = 0; i < CATALOG_PRODUCTS.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    for (const p of CATALOG_PRODUCTS.slice(i, i + BATCH_SIZE)) {
+      batch.set(doc(db, "products", p.id), {
+        ...p,
+        active: p.active !== false,
+        organizationId: orgId,
+        createdBy: ctx.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
   }
-  await batch.commit();
 
   return true;
 }
