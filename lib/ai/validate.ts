@@ -61,8 +61,8 @@ export function validateFollowup(raw: any) {
   };
 }
 
-export function validateLoyalty(raw: any) {
+export function validateLoyalty(raw: any, dias: number[] = [1, 3, 7, 15, 30, 45, 60]) {
   const out: Record<string, string> = {};
-  for (const d of [1, 3, 7, 15, 30, 45, 60]) out[`dia${d}`] = str(raw?.[`dia${d}`]);
+  for (const d of dias) out[`dia${d}`] = str(raw?.[`dia${d}`]);
   return out;
 }

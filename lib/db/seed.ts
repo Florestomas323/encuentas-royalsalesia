@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore";
 import type { Ctx } from "@/lib/db/services";
 import { CATALOG_PRODUCTS } from "@/lib/catalog/data";
+import { capabilitiesFor, classifyFamily } from "@/lib/catalog/classify";
 
 // Un id real del catálogo que usamos como marcador de "ya sembrado".
 const MARKER_ID = "elite-cooking-system-5";
@@ -52,9 +53,14 @@ export async function seedCatalogIfEmpty(ctx: Ctx): Promise<boolean> {
   for (let i = 0; i < CATALOG_PRODUCTS.length; i += BATCH_SIZE) {
     const batch = writeBatch(db);
     for (const p of CATALOG_PRODUCTS.slice(i, i + BATCH_SIZE)) {
+      const caps = capabilitiesFor(p);
       batch.set(doc(db, "products", p.id), {
         ...p,
         active: p.active !== false,
+        // Capacidades de contenido calculadas por el clasificador (no por IA).
+        supportsRecipes: caps.supportsRecipes,
+        productFamily: classifyFamily(p),
+        contentCapabilities: caps,
         organizationId: orgId,
         createdBy: ctx.uid,
         createdAt: serverTimestamp(),
@@ -65,4 +71,38 @@ export async function seedCatalogIfEmpty(ctx: Ctx): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * Migración idempotente: para catálogos ya sembrados ANTES de tener flags de
+ * contenido, rellena supportsRecipes / contentCapabilities / productFamily en
+ * los productos que aún no los tengan. Segura de correr varias veces (solo toca
+ * los que falten). Devuelve cuántos productos actualizó.
+ */
+export async function upgradeCatalogCapabilities(ctx: Ctx): Promise<number> {
+  const orgId = ctx?.profile?.organizationId;
+  if (!orgId) return 0;
+  const snap = await getDocs(query(
+    collection(db, "products"),
+    where("organizationId", "==", orgId),
+  ));
+  const faltan = snap.docs.filter((d) => (d.data() as any)?.supportsRecipes === undefined);
+  if (!faltan.length) return 0;
+  let total = 0;
+  for (let i = 0; i < faltan.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    for (const d of faltan.slice(i, i + BATCH_SIZE)) {
+      const data = d.data() as any;
+      const caps = capabilitiesFor(data);
+      batch.update(d.ref, {
+        supportsRecipes: caps.supportsRecipes,
+        productFamily: classifyFamily(data),
+        contentCapabilities: caps,
+        updatedAt: serverTimestamp(),
+      });
+      total++;
+    }
+    await batch.commit();
+  }
+  return total;
 }

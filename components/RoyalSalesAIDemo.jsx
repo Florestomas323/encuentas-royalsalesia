@@ -18,9 +18,14 @@ import {
   createFollowup, subscribeFollowups, completeFollowup, getFollowupsForCustomer,
   logInteraction, getInteractionsForCustomer, getRecentVisits, tsToDate,
   softDeleteCustomer, getPurchaseItemsForCustomer, repairFollowupsForDeletedCustomers,
+  repairLoyaltyContentForNonCookingCustomers,
 } from "@/lib/db/services";
 import { subscribeProducts } from "@/lib/db/catalog";
-import { seedCatalogIfEmpty } from "@/lib/db/seed";
+import { seedCatalogIfEmpty, upgradeCatalogCapabilities } from "@/lib/db/seed";
+import {
+  classifyFamily, capabilitiesFor, buildLoyaltyPlan, allowedContentTypes, planTrackFor,
+} from "@/lib/catalog/classify";
+import { getOrgCurrency, formatCurrency, parseAmount } from "@/lib/format/currency";
 import ProductPicker from "@/components/catalog/ProductPicker";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
 
@@ -47,15 +52,8 @@ const INFO_INTERNA = [
 
 const MOTIVOS = ["Precio", "Debe consultarlo con su pareja", "Quiere pensarlo", "Financiamiento", "No vio suficiente necesidad", "Quiere comparar", "No era el momento", "Otro"];
 
-const DIAS_FIDELIZACION = [
-  { dia: 1, titulo: "Bienvenida" },
-  { dia: 3, titulo: "Consejo de uso" },
-  { dia: 7, titulo: "Receta personalizada" },
-  { dia: 15, titulo: "Tip de mantenimiento" },
-  { dia: 30, titulo: "Seguimiento de satisfacción" },
-  { dia: 45, titulo: "Solicitud de referidos" },
-  { dia: 60, titulo: "Producto complementario" },
-];
+// El plan de fidelización ahora es DINÁMICO según la categoría del producto
+// comprado (ver lib/catalog/classify.ts → buildLoyaltyPlan).
 
 // ---------- CAPA DE IA (llama a nuestro backend, nunca al proveedor directamente) ----------
 // La API key vive solo en el servidor. Aquí solo enviamos el token de sesión de
@@ -210,14 +208,22 @@ export default function RoyalSalesAIDemo() {
     const un1 = subscribeCustomers(ctx, setClientes, () => setClientes([]));
     const un2 = subscribeFollowups(ctx, setFollowups, () => setFollowups([]));
     const un3 = subscribeProducts(ctx, setProductos, () => setProductos([]));
-    // Sembrar catálogo de ejemplo una sola vez (idempotente) por organización.
-    seedCatalogIfEmpty(ctx).catch((e) => console.log("[v0] seed catálogo:", e?.message));
-    // Reparación idempotente: cancela seguimientos huérfanos de clientes ya
-    // eliminados (datos previos al fix). No borra nada.
+    // Sembrar catálogo real una sola vez (idempotente); al terminar, asegurar
+    // que todos los productos tengan flags de contenido (supportsRecipes, etc.).
+    seedCatalogIfEmpty(ctx)
+      .then(() => upgradeCatalogCapabilities(ctx))
+      .catch((e) => console.log("[v0] seed/upgrade catálogo:", e?.message));
+    // Reparaciones idempotentes de datos previos (no borran historial):
+    // 1) cancelar seguimientos de clientes eliminados;
+    // 2) quitar recetas de planes de clientes sin productos culinarios.
     repairFollowupsForDeletedCustomers(ctx).catch((e) => console.log("[v0] repair followups:", e?.message));
+    repairLoyaltyContentForNonCookingCustomers(ctx).catch((e) => console.log("[v0] repair recetas:", e?.message));
     return () => { un1(); un2(); un3(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.organizationId]);
+
+  // Moneda de la organización (hoy COP/es-CO). Nunca se decide por contexto.
+  const orgCurrency = useMemo(() => getOrgCurrency(profile), [profile]);
 
   // Seguimientos visibles = pendientes cuyo cliente existe, es de la misma
   // organización y NO está eliminado. Protege contra seguimientos huérfanos y
@@ -375,6 +381,29 @@ export default function RoyalSalesAIDemo() {
         : (compraData.producto ? [compraData.producto] : []);
       const resumenProducto = nombresProductos.join(", ");
 
+      // Familias de producto (clasificador = fuente de verdad, NO la IA).
+      // Cada item se resuelve contra el catálogo; si es texto libre, por nombre.
+      const catalogoPorId = new Map((productos || []).map((p) => [p.id, p]));
+      const productosComprados = itemsCompra.length
+        ? itemsCompra.map((it) => catalogoPorId.get(it.productId) || { name: it.productNameSnapshot })
+        : (compraData.producto ? [{ name: compraData.producto }] : []);
+      const familias = productosComprados.map((p) => classifyFamily(p));
+      // Plan de fidelización dinámico según la categoría comprada.
+      const planPasos = buildLoyaltyPlan(familias.length ? familias : ["cooking"]);
+      // Capacidades combinadas (OR) y si algún producto admite recetas.
+      const capsCombinadas = productosComprados.reduce((acc, p) => {
+        const c = capabilitiesFor(p);
+        return {
+          supportsRecipes: acc.supportsRecipes || c.supportsRecipes,
+          supportsUsageTips: acc.supportsUsageTips || c.supportsUsageTips,
+          supportsMaintenance: acc.supportsMaintenance || c.supportsMaintenance,
+          supportsCare: acc.supportsCare || c.supportsCare,
+          supportsInstallationTips: acc.supportsInstallationTips || c.supportsInstallationTips,
+        };
+      }, { supportsRecipes: false, supportsUsageTips: false, supportsMaintenance: false, supportsCare: false, supportsInstallationTips: false });
+      const admiteRecetas = capsCombinadas.supportsRecipes;
+      const categoriaRep = productosComprados.map((p) => p.category).filter(Boolean).join(", ") || "no especificada";
+
       let contenido = {};
       try {
         contenido = await llamarIA(auth, {
@@ -382,13 +411,21 @@ export default function RoyalSalesAIDemo() {
           profile: perfilIA,
           product: resumenProducto,
           favoriteMeal: respuestas.favoriteMeal,
+          supportsRecipes: admiteRecetas,
+          productCategory: categoriaRep,
+          allowedContentTypes: allowedContentTypes(capsCombinadas),
+          plan: planPasos.map((p) => ({ dia: p.dia, contentType: p.contentType })),
+          currency: orgCurrency.currency,
+          locale: orgCurrency.locale,
         }) || {};
       } catch { /* plan sin personalización — no bloquea */ }
 
       await savePurchaseWithItems(
         ctx, visitId, customerId,
         {
-          amount: compraData.monto || null,
+          amount: parseAmount(compraData.monto),
+          amountText: compraData.monto || null,
+          currency: orgCurrency.currency,
           products: nombresProductos,
           notes: "",
         },
@@ -399,10 +436,11 @@ export default function RoyalSalesAIDemo() {
       await updateCustomer(ctx, customerId, { status: "purchased" });
 
       const plan = [];
-      for (const { dia, titulo } of DIAS_FIDELIZACION) {
+      for (const { dia, titulo, contentType } of planPasos) {
         const scheduledAt = new Date(Date.now() + dia * 86400000);
         await createFollowup(ctx, {
           customerId, visitId, type: "loyalty",
+          contentType, supportsRecipes: admiteRecetas,
           scheduledAt, objective: titulo,
           suggestedMessage: contenido[`dia${dia}`] || "",
         });

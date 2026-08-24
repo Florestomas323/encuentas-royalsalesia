@@ -36,10 +36,20 @@ export interface CatalogProduct {
 
 /**
  * Product = documento del catálogo ya en Firestore: el catálogo real más los
- * campos que añade el seed al escribirlo por organización.
+ * campos que añade el seed al escribirlo por organización, incluidas las
+ * capacidades de contenido (supportsRecipes, etc.) calculadas por el clasificador.
  */
 export interface Product extends CatalogProduct {
   organizationId: string;
+  supportsRecipes?: boolean;
+  productFamily?: string;
+  contentCapabilities?: {
+    supportsRecipes: boolean;
+    supportsUsageTips: boolean;
+    supportsMaintenance: boolean;
+    supportsCare: boolean;
+    supportsInstallationTips: boolean;
+  };
   createdAt?: unknown;
   updatedAt?: unknown;
 }

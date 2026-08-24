@@ -1,0 +1,187 @@
+// Clasificador de productos: única fuente de verdad para saber qué contenido
+// puede generarse por producto. Se usa tanto para PRE-CALCULAR y guardar los
+// flags en Firestore (seed/data) como en TIEMPO DE EJECUCIÓN (componente + API
+// de IA), para no depender de que un documento viejo tenga el campo.
+//
+// Regla central: la IA NUNCA decide si un producto permite recetas. Eso sale de
+// aquí (category / line / name), se persiste en Firestore y se le impone al modelo.
+
+export type ContentCapabilities = {
+  supportsRecipes: boolean;
+  supportsUsageTips: boolean;
+  supportsMaintenance: boolean;
+  supportsCare: boolean;
+  supportsInstallationTips: boolean;
+};
+
+export type ProductFamily =
+  | "cooking"           // ollas, sartenes, sets de cocina
+  | "food_appliance"    // licuadora, extractor de jugos, procesador
+  | "filtration"        // agua, ducha, aire, filtros de reemplazo
+  | "beverage_appliance" // café, té, espresso, chocolatera
+  | "cutlery"           // cuchillos, cubiertos, utensilios, tablas
+  | "accessory";        // bases, protectores, mantenimiento, almacenamiento
+
+const COOKING_CATEGORIES = new Set([
+  "cookware", "skillet", "griddle", "stock_pot", "pressure_cooker",
+  "paella_pan", "casserole", "roaster", "cooking_system",
+]);
+
+const FILTRATION_CATEGORIES = new Set(["filtration", "replacement_filter"]);
+
+const CUTLERY_CATEGORIES = new Set([
+  "cutlery", "flatware", "kitchen_tool", "serving_utensil",
+  "cutting_board", "servingware", "glassware",
+]);
+
+// Palabras que identifican un electrodoméstico que SÍ prepara alimentos.
+const FOOD_APPLIANCE_RE =
+  /blender|licuadora|juicer|extractor|jugo|precision cook|salad master|salad machine|ensalad|multipan|food processor|procesador/i;
+
+// Palabras que identifican filtración/purificación (agua, ducha, aire).
+const FILTRATION_RE = /filtr|ducha|shower|purif|fresca(flow|pure)|air filtration|aire/i;
+
+// Palabras de café/té/bebidas calientes.
+const BEVERAGE_RE = /barista|espresso|expertea|café|cafe|té |chocolatera|tazas|azucarera|jarro para leche/i;
+
+type ClassifyInput = {
+  category?: string | null;
+  line?: string | null;
+  name?: string | null;
+  type?: string | null;
+};
+
+export function classifyFamily(p: ClassifyInput): ProductFamily {
+  const cat = (p.category || "").toLowerCase();
+  const hay = `${p.line || ""} ${p.name || ""}`.toLowerCase();
+
+  // 1) Electrodoméstico de alimentos (por nombre/línea) => recetas.
+  if (FOOD_APPLIANCE_RE.test(hay)) return "food_appliance";
+
+  // 2) Cocina (cacerolas, sartenes, sets).
+  if (COOKING_CATEGORIES.has(cat)) return "cooking";
+
+  // 3) Filtración / purificación.
+  if (FILTRATION_CATEGORIES.has(cat) || FILTRATION_RE.test(hay)) return "filtration";
+
+  // 4) Café / té / bebidas.
+  if (cat === "coffee_tea" || BEVERAGE_RE.test(hay)) return "beverage_appliance";
+
+  // 5) Cuchillería, cubiertos, utensilios, tablas, vasos.
+  if (CUTLERY_CATEGORIES.has(cat)) return "cutlery";
+
+  // 6) Resto: accesorios, bases, mantenimiento, almacenamiento.
+  return "accessory";
+}
+
+const CAPS: Record<ProductFamily, ContentCapabilities> = {
+  cooking:            { supportsRecipes: true,  supportsUsageTips: true, supportsMaintenance: true,  supportsCare: true, supportsInstallationTips: false },
+  food_appliance:     { supportsRecipes: true,  supportsUsageTips: true, supportsMaintenance: true,  supportsCare: true, supportsInstallationTips: false },
+  filtration:         { supportsRecipes: false, supportsUsageTips: true, supportsMaintenance: true,  supportsCare: true, supportsInstallationTips: true  },
+  beverage_appliance: { supportsRecipes: false, supportsUsageTips: true, supportsMaintenance: true,  supportsCare: true, supportsInstallationTips: false },
+  cutlery:            { supportsRecipes: false, supportsUsageTips: true, supportsMaintenance: true,  supportsCare: true, supportsInstallationTips: false },
+  accessory:          { supportsRecipes: false, supportsUsageTips: true, supportsMaintenance: false, supportsCare: true, supportsInstallationTips: false },
+};
+
+export function capabilitiesFor(p: ClassifyInput): ContentCapabilities {
+  return { ...CAPS[classifyFamily(p)] };
+}
+
+export function supportsRecipes(p: ClassifyInput): boolean {
+  return capabilitiesFor(p).supportsRecipes;
+}
+
+// ---------- Plan de fidelización dinámico ----------
+
+// Tipos de contenido de cada etapa. La IA recibe estos tipos y los obedece.
+export type ContentType =
+  | "welcome" | "usage_tip" | "recipe" | "maintenance" | "care"
+  | "satisfaction" | "referrals" | "complementary" | "installation_tip" | "reminder";
+
+export type PlanStep = { dia: number; titulo: string; contentType: ContentType };
+
+const TITULOS: Record<ContentType, string> = {
+  welcome: "Bienvenida",
+  usage_tip: "Consejo de uso",
+  recipe: "Receta personalizada",
+  maintenance: "Tip de mantenimiento",
+  care: "Consejo de cuidado",
+  satisfaction: "Seguimiento de satisfacción",
+  referrals: "Solicitud de referidos",
+  complementary: "Producto complementario",
+  installation_tip: "Consejo de instalación",
+  reminder: "Recordatorio de filtro",
+};
+
+export function tituloDe(t: ContentType): string {
+  return TITULOS[t];
+}
+
+// Grupo del plan según el conjunto de productos comprados.
+export type PlanTrack = "cooking" | "filtration" | "appliance" | "generic";
+
+export function planTrackFor(families: ProductFamily[]): PlanTrack {
+  if (families.some((f) => f === "cooking" || f === "food_appliance")) return "cooking";
+  if (families.some((f) => f === "filtration")) return "filtration";
+  if (families.some((f) => f === "beverage_appliance")) return "appliance";
+  return "generic";
+}
+
+const TRACKS: Record<PlanTrack, PlanStep[]> = {
+  // Cocina / electrodoméstico de alimentos: incluye receta en el día 7.
+  cooking: [
+    { dia: 1, titulo: TITULOS.welcome, contentType: "welcome" },
+    { dia: 3, titulo: TITULOS.usage_tip, contentType: "usage_tip" },
+    { dia: 7, titulo: TITULOS.recipe, contentType: "recipe" },
+    { dia: 15, titulo: TITULOS.maintenance, contentType: "maintenance" },
+    { dia: 30, titulo: TITULOS.satisfaction, contentType: "satisfaction" },
+    { dia: 45, titulo: TITULOS.referrals, contentType: "referrals" },
+    { dia: 60, titulo: TITULOS.complementary, contentType: "complementary" },
+  ],
+  // Filtración/purificación: sin receta; cuidado + mantenimiento + recordatorio.
+  filtration: [
+    { dia: 1, titulo: TITULOS.welcome, contentType: "welcome" },
+    { dia: 3, titulo: TITULOS.usage_tip, contentType: "usage_tip" },
+    { dia: 7, titulo: TITULOS.care, contentType: "care" },
+    { dia: 15, titulo: TITULOS.maintenance, contentType: "maintenance" },
+    { dia: 30, titulo: TITULOS.satisfaction, contentType: "satisfaction" },
+    { dia: 45, titulo: TITULOS.referrals, contentType: "referrals" },
+    { dia: 60, titulo: TITULOS.reminder, contentType: "reminder" },
+  ],
+  // Electrodomésticos de bebidas: sin receta de comida; uso + limpieza.
+  appliance: [
+    { dia: 1, titulo: TITULOS.welcome, contentType: "welcome" },
+    { dia: 3, titulo: TITULOS.usage_tip, contentType: "usage_tip" },
+    { dia: 7, titulo: TITULOS.care, contentType: "care" },
+    { dia: 15, titulo: TITULOS.maintenance, contentType: "maintenance" },
+    { dia: 30, titulo: TITULOS.satisfaction, contentType: "satisfaction" },
+    { dia: 45, titulo: TITULOS.referrals, contentType: "referrals" },
+    { dia: 60, titulo: TITULOS.complementary, contentType: "complementary" },
+  ],
+  // Accesorios/cuchillería: cuidado y uso, sin receta.
+  generic: [
+    { dia: 1, titulo: TITULOS.welcome, contentType: "welcome" },
+    { dia: 3, titulo: TITULOS.usage_tip, contentType: "usage_tip" },
+    { dia: 7, titulo: TITULOS.care, contentType: "care" },
+    { dia: 15, titulo: TITULOS.maintenance, contentType: "maintenance" },
+    { dia: 30, titulo: TITULOS.satisfaction, contentType: "satisfaction" },
+    { dia: 45, titulo: TITULOS.referrals, contentType: "referrals" },
+    { dia: 60, titulo: TITULOS.complementary, contentType: "complementary" },
+  ],
+};
+
+/** Construye el plan de fidelización a partir de las familias de producto compradas. */
+export function buildLoyaltyPlan(families: ProductFamily[]): PlanStep[] {
+  return TRACKS[planTrackFor(families)].map((s) => ({ ...s }));
+}
+
+/** Lista de tipos de contenido permitidos para un conjunto de capacidades. */
+export function allowedContentTypes(caps: ContentCapabilities): ContentType[] {
+  const base: ContentType[] = ["welcome", "satisfaction", "referrals", "complementary"];
+  if (caps.supportsUsageTips) base.push("usage_tip");
+  if (caps.supportsRecipes) base.push("recipe");
+  if (caps.supportsMaintenance) base.push("maintenance", "reminder");
+  if (caps.supportsCare) base.push("care");
+  if (caps.supportsInstallationTips) base.push("installation_tip");
+  return base;
+}

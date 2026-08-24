@@ -70,13 +70,31 @@ export async function POST(req: Request) {
     }
 
     if (type === "loyalty") {
+      // El plan y los flags de contenido llegan YA decididos desde el cliente
+      // (a partir de Firestore/clasificador). La IA solo redacta obedeciéndolos.
+      const plan = Array.isArray(body.plan) && body.plan.length
+        ? body.plan.filter((p: any) => Number.isFinite(Number(p?.dia)) && typeof p?.contentType === "string")
+            .map((p: any) => ({ dia: Number(p.dia), contentType: String(p.contentType) }))
+        : [1, 3, 7, 15, 30, 45, 60].map((d) => ({ dia: d, contentType: "usage_tip" }));
+      const supportsRecipes = body.supportsRecipes === true;
+      const allowed: string[] = Array.isArray(body.allowedContentTypes)
+        ? body.allowedContentTypes.filter((x: any) => typeof x === "string")
+        : [];
       const prompt = loyaltyPrompt({
         profile: body.profile,
         product: body.product || "",
         favoriteMeal: body.favoriteMeal || "",
+        supportsRecipes,
+        productCategory: typeof body.productCategory === "string" ? body.productCategory : "",
+        allowedContentTypes: allowed,
+        plan,
+        currency: typeof body.currency === "string" ? body.currency : "COP",
+        locale: typeof body.locale === "string" ? body.locale : "es-CO",
       });
       const raw = await runAI(prompt, 1200);
-      const result = validateLoyalty(raw);
+      // Refuerzo servidor: si el producto NO admite recetas, ninguna etapa de
+      // tipo receta debe existir (el plan ya no la incluye, pero por si acaso).
+      const result = validateLoyalty(raw, plan.map((p) => p.dia));
       return NextResponse.json({ ok: true, result });
     }
 
