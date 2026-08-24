@@ -272,8 +272,12 @@ export async function updateVisit(ctx: Ctx, id: string, data: Record<string, unk
 }
 
 export async function findInProgressVisit(ctx: Ctx) {
+  // El filtro de organizationId es OBLIGATORIO: sin él, las reglas de Firestore
+  // no pueden probar que los documentos son de la organización del usuario y
+  // rechazan la consulta completa (permission denied), tumbando el dashboard.
   const snap = await getDocs(query(
     collection(db, "visits"),
+    where("organizationId", "==", ctx.profile.organizationId),
     where("salespersonId", "==", ctx.uid),
     where("status", "==", "in_progress"),
     limit(1)
