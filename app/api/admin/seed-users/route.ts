@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[seed-users] Firebase Admin init:", err?.message);
     return fail(
-      "Firebase Admin no pudo inicializarse. Revisa FIREBASE_ADMIN_PROJECT_ID, FIREBASE_ADMIN_CLIENT_EMAIL y FIREBASE_ADMIN_PRIVATE_KEY en Vercel.",
+      "Firebase Admin no pudo inicializarse. Revisa FIREBASE_SERVICE_ACCOUNT_JSON en Vercel — debe contener el JSON completo del service account.",
       500
     );
   }
