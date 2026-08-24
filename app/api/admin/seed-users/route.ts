@@ -305,5 +305,31 @@ export async function POST(req: NextRequest) {
     return fail("No se pudo crear la organización de testing o el perfil del reviewer en Firestore.", 500);
   }
 
-  return NextResponse.json({ ok: true, ...resultado });
+  // --- 7. Diagnóstico incluido en la respuesta ---
+  // Compara el proyecto del NAVEGADOR con el del SERVIDOR y vuelve a leer los
+  // documentos recién escritos. Así, al ejecutar el setup, se ve en pantalla si
+  // hay un desajuste de proyectos (la causa #1 de "el login no encuentra el perfil").
+  const clientProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? null;
+  let serverProjectId: string | null = null;
+  try {
+    const { parseServiceAccount } = await import("@/lib/firebase/admin");
+    const parsed = parseServiceAccount(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    if (parsed.ok) serverProjectId = parsed.account.project_id;
+  } catch { /* ya validado arriba */ }
+
+  const proyectosCoinciden =
+    !!clientProjectId && !!serverProjectId && clientProjectId === serverProjectId;
+
+  const diagnostico: Record<string, unknown> = {
+    proyectoNavegador: clientProjectId,
+    proyectoServidor: serverProjectId,
+    proyectosCoinciden,
+  };
+  if (!proyectosCoinciden && clientProjectId && serverProjectId) {
+    diagnostico.PROBLEMA =
+      `El navegador usa "${clientProjectId}" pero el servidor escribe en "${serverProjectId}". ` +
+      `Corrige NEXT_PUBLIC_FIREBASE_PROJECT_ID, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN y NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET en Vercel para que apunten a "${serverProjectId}", vuelve a desplegar y ejecuta el setup otra vez.`;
+  }
+
+  return NextResponse.json({ ok: true, ...resultado, diagnostico });
 }

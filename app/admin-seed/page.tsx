@@ -11,6 +11,7 @@ export default function AdminSeedPage() {
   const [cargando, setCargando] = useState(false);
   const [listo, setListo] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [diagnostico, setDiagnostico] = useState<any>(null);
 
   async function ejecutar() {
     if (cargando) return; // evita doble envío
@@ -40,6 +41,7 @@ export default function AdminSeedPage() {
         return;
       }
 
+      setDiagnostico(data?.diagnostico ?? null);
       setListo(true);
     } catch {
       setError("No pudimos conectar con el servidor. Revisa tu conexión.");
@@ -60,7 +62,36 @@ export default function AdminSeedPage() {
           <div className="text-center">
             <CheckCircle2 className="w-10 h-10 text-green-600 mx-auto mb-3" />
             <p className="font-semibold text-green-950 mb-1">Configuración inicial completada correctamente.</p>
-            <p className="text-xs text-gray-500 mb-5">Ya puedes iniciar sesión con cualquiera de las dos cuentas.</p>
+            <p className="text-xs text-gray-500 mb-4">Ya puedes iniciar sesión con cualquiera de las dos cuentas.</p>
+
+            {/* Diagnóstico: confirma que el navegador y el servidor usan el MISMO
+                proyecto de Firebase. Si no coinciden, el login nunca encontrará
+                el perfil recién creado por más que el setup diga "OK". */}
+            {diagnostico && (
+              <div
+                className={`text-left rounded-xl p-3 mb-4 text-xs space-y-1 break-all border ${
+                  diagnostico.proyectosCoinciden
+                    ? "bg-green-50 border-green-100 text-green-900"
+                    : "bg-red-50 border-red-200 text-red-800"
+                }`}
+              >
+                <p>
+                  <span className="font-semibold">Proyecto navegador:</span>{" "}
+                  {diagnostico.proyectoNavegador ?? "—"}
+                </p>
+                <p>
+                  <span className="font-semibold">Proyecto servidor:</span>{" "}
+                  {diagnostico.proyectoServidor ?? "—"}
+                </p>
+                <p className="font-semibold">
+                  {diagnostico.proyectosCoinciden
+                    ? "Los proyectos coinciden. Ya puedes entrar."
+                    : "Los proyectos NO coinciden — esta es la causa del problema."}
+                </p>
+                {diagnostico.PROBLEMA && <p>{diagnostico.PROBLEMA}</p>}
+              </div>
+            )}
+
             <a
               href="/login"
               className="block w-full py-3 rounded-xl bg-green-800 text-white font-semibold"
