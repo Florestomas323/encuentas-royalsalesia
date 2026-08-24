@@ -32,11 +32,14 @@ import {
   serviceTypeLabel, serviceChecklistFor, tituloDe,
 } from "@/lib/catalog/classify";
 import { getOrgCurrency, formatCurrency, parseAmount } from "@/lib/format/currency";
+import { fetchCustomer360 } from "@/lib/customer/lifecycle";
 import ProductPicker from "@/components/catalog/ProductPicker";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import ServiceSheet from "@/components/services/ServiceSheet";
 import ContentLibrary from "@/components/content/ContentLibrary";
 import ProductAssistant from "@/components/content/ProductAssistant";
+import Customer360 from "@/components/customer/Customer360";
+import AttentionPanel from "@/components/dashboard/AttentionPanel";
 
 // ---------- ENCUESTA (claves semánticas camelCase — solo preguntas para el cliente) ----------
 const PREGUNTAS = [
@@ -198,6 +201,9 @@ export default function RoyalSalesAIDemo() {
 
   // Fase C: contenido oficial por producto (biblioteca del distribuidor).
   const [contenidoProd, setContenidoProd] = useState([]);
+
+  // Fase D: vista 360 del cliente (agregación de solo lectura).
+  const [ficha360, setFicha360] = useState(null);
 
   const draftTimer = useRef(null);
 
@@ -689,31 +695,48 @@ export default function RoyalSalesAIDemo() {
   }
 
   // ---------- ficha del cliente ----------
+  // Fase D: abre la ficha 360. Muestra el encabezado de inmediato y carga en
+  // paralelo todo el contexto (compras, servicios, seguimientos, perfil IA...).
   async function abrirFicha(c) {
-    setFichaCliente(c); setFichaTimeline(null); setFichaCompras(null); setScreen("fichaCliente");
-    getPurchaseItemsForCustomer(ctx, c.id).then(setFichaCompras).catch(() => setFichaCompras([]));
+    setFichaCliente(c); setFicha360(null); setScreen("fichaCliente");
     try {
-      const [visitas, fups, inter] = await Promise.all([
-        getVisitsForCustomer(ctx, c.id),
-        getFollowupsForCustomer(ctx, c.id),
-        getInteractionsForCustomer(ctx, c.id),
-      ]);
-      const eventos = [];
-      visitas.forEach((v) => {
-        const d = tsToDate(v.startedAt || v.createdAt);
-        eventos.push({ fecha: d, texto: "Visita iniciada" });
-        if (v.outcome) eventos.push({ fecha: tsToDate(v.completedAt) || d, texto: `Resultado: ${ETIQUETA_ESTADO[v.outcome] || v.outcome}` });
-      });
-      fups.forEach((f) => {
-        eventos.push({ fecha: tsToDate(f.createdAt), texto: `Seguimiento programado — ${f.objective || f.type}` });
-        if (f.status === "completed") eventos.push({ fecha: tsToDate(f.completedAt), texto: "Seguimiento completado" });
-      });
-      inter.forEach((i) => eventos.push({ fecha: tsToDate(i.createdAt), texto: `WhatsApp: ${i.action}` }));
-      eventos.sort((a, b) => (a.fecha?.getTime() || 0) - (b.fecha?.getTime() || 0));
-      setFichaTimeline(eventos);
+      const data = await fetchCustomer360(ctx, c.id);
+      setFicha360(data);
     } catch {
-      setFichaTimeline([]);
+      setFicha360({ error: true });
     }
+  }
+
+  // Recarga la ficha 360 tras una acción (p. ej. crear seguimiento).
+  async function recargarFicha360() {
+    if (!fichaCliente) return;
+    try { setFicha360(await fetchCustomer360(ctx, fichaCliente.id)); } catch {}
+  }
+
+  // Crea un seguimiento manual para dentro de 3 días desde la ficha 360.
+  async function abrirNuevoSeguimientoManual(cli) {
+    if (!cli?.id) return;
+    try {
+      await createFollowup(ctx, {
+        customerId: cli.id,
+        type: "manual",
+        scheduledAt: new Date(Date.now() + 3 * 86400000),
+        objective: "Contactar al cliente",
+        suggestedMessage: "",
+      });
+      mostrarToast("Seguimiento creado para dentro de 3 días.");
+      recargarFicha360();
+    } catch {
+      mostrarToast("No se pudo crear el seguimiento.");
+    }
+  }
+
+  // Abre WhatsApp con el mensaje sugerido de la próxima acción (si hay).
+  function abrirWhatsAppCliente(cli, next) {
+    if (!cli?.phone) { mostrarToast("Este cliente no tiene teléfono."); return; }
+    const msg = (next?.detail || "").replace("{nombre}", cli.firstName || "");
+    const url = `https://wa.me/${toWhatsAppNumber(cli.phone)}${msg ? `?text=${encodeURIComponent(msg)}` : ""}`;
+    if (typeof window !== "undefined") window.open(url, "_blank", "noopener");
   }
 
   async function eliminarClienteConfirmado() {
@@ -1400,85 +1423,28 @@ export default function RoyalSalesAIDemo() {
     );
   }
 
-  // ---------- FICHA ----------
+  // ---------- FICHA 360 (Fase D) ----------
   if (screen === "fichaCliente" && fichaCliente) {
     const c = fichaCliente;
+    const catMap = new Map((productos || []).map((p) => [p.id, p]));
     return (
       <ScreenWrap>
         {Toast}
         <TopBar title={`${c.firstName} ${c.lastName || ""}`} onBack={() => setScreen("clientes")} />
-        <div className="px-5 space-y-4 flex-1 pb-6">
-          <div className="bg-green-50 border border-green-100 rounded-2xl p-4 grid grid-cols-2 gap-3">
-            <MiniCard label="Estado" valor={ETIQUETA_ESTADO[c.status] || "Nuevo"} />
-            <MiniCard label="Teléfono" valor={c.phone} />
-            <MiniCard label="Familia" valor={c.familySize ? `${c.familySize} integrantes` : "—"} />
-            <MiniCard label="Creado" valor={fmtDia(tsToDate(c.createdAt))} />
-          </div>
-          {clientesConServicio.has(c.id) && (
-            <button
-              onClick={() => setScreen("servicios")}
-              className="w-full flex items-center gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-left active:bg-amber-100 transition"
-            >
-              <Wrench className="w-4 h-4 text-amber-600 shrink-0" strokeWidth={2} />
-              <p className="text-[13px] text-amber-800 leading-snug flex-1">
-                Tiene un servicio postventa pendiente. El plan de fidelización se activará al completarlo.
-              </p>
-              <ChevronRight className="w-4 h-4 text-amber-600 shrink-0" />
-            </button>
-          )}
-          <div>
-            <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Historial</p>
-            {fichaTimeline === null ? (
-              <SkeletonLista />
-            ) : fichaTimeline.length === 0 ? (
-              <p className="text-sm text-gray-400">Sin eventos todavía.</p>
-            ) : (
-              <div className="space-y-3">
-                {fichaTimeline.map((t, i) => (
-                  <div key={i} className="flex gap-3">
-                    <div className="flex flex-col items-center">
-                      <div className="w-2.5 h-2.5 rounded-full bg-green-700 mt-1.5" />
-                      {i < fichaTimeline.length - 1 && <div className="w-px flex-1 bg-gray-200" />}
-                    </div>
-                    <div className="pb-3">
-                      <p className="text-xs text-gray-400">{fmtFecha(t.fecha)}</p>
-                      <p className="text-sm text-gray-800">{t.texto}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Productos comprados */}
-          {fichaCompras && fichaCompras.length > 0 && (
-            <div>
-              <p className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2">Productos comprados</p>
-              <div className="space-y-2">
-                {fichaCompras.map((it) => (
-                  <Card key={it.id} className="p-3.5 flex items-center gap-3">
-                    <span className={`w-10 h-10 rounded-xl grid place-items-center shrink-0 ${it.pieceIdsSnapshot?.length ? "bg-accent-soft" : "bg-brand/8"}`}>
-                      {it.pieceIdsSnapshot?.length ? <Boxes className="w-5 h-5 text-accent" /> : <Package className="w-5 h-5 text-brand" />}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-display font-semibold text-[15px] text-brand-deep truncate">{it.productNameSnapshot}</p>
-                      {it.pieceIdsSnapshot?.length ? (
-                        <p className="text-[12px] text-muted">Set · {it.pieceIdsSnapshot.length} piezas incluidas</p>
-                      ) : null}
-                    </div>
-                    <Badge className="text-brand-dark bg-brand/[0.06] border-brand/10">x{it.quantity}</Badge>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Eliminar cliente (soft delete) */}
-          <div className="pt-2">
-            <Boton variant="danger" onClick={() => setConfirmarEliminar(c)}>
-              <Trash2 className="w-[18px] h-[18px]" /> Eliminar cliente
-            </Boton>
-          </div>
+        <div className="flex-1">
+          <Customer360
+            data={ficha360}
+            cliente={c}
+            catalogoPorId={catMap}
+            formatCurrency={formatCurrency}
+            currency={orgCurrency.currency}
+            locale={orgCurrency.locale}
+            onNuevaVisita={() => { limpiarFlujo(); setScreen("nuevaVisita"); }}
+            onNuevoSeguimiento={abrirNuevoSeguimientoManual}
+            onWhatsApp={abrirWhatsAppCliente}
+            onServicios={() => setScreen("servicios")}
+            onEliminar={(cli) => setConfirmarEliminar(cli)}
+          />
         </div>
 
         <ConfirmSheet

@@ -615,6 +615,18 @@ export async function getInteractionsForCustomer(ctx: Ctx, customerId: string) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
+// ---------- PERFILES COMERCIALES (IA) ----------
+// Fase D: recupera los perfiles comerciales generados por la IA para un cliente
+// (más reciente primero) para mostrarlos en la vista 360 sin regenerar nada.
+export async function getAiProfilesForCustomer(ctx: Ctx, customerId: string) {
+  const snap = await getDocs(query(
+    collection(db, "aiProfiles"),
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("customerId", "==", customerId)
+  ));
+  return sortByDateDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt");
+}
+
 // ---------- utilidades ----------
 export function tsToDate(t: any): Date | null {
   if (!t) return null;
