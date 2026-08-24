@@ -585,8 +585,13 @@ export default function RoyalSalesAIDemo() {
       const plan = [];
       if (requiereServicio) {
         // Crear los servicios postventa; los seguimientos NO se agendan aún.
+        // El nombre sale del formulario en memoria (prospecto): la lista de
+        // clientes suscrita puede no haberse actualizado aún si el cliente se
+        // creó hace un instante (condición de carrera que dejaba "Cliente").
         const cliActual = (clientes || []).find((c) => c.id === customerId);
-        const nombreCli = cliActual ? `${cliActual.firstName || ""} ${cliActual.lastName || ""}`.trim() : "";
+        const nombreCli = (cliActual
+          ? `${cliActual.firstName || ""} ${cliActual.lastName || ""}`
+          : `${prospecto.firstName || ""} ${prospecto.lastName || ""}`).trim();
         await createPostSaleServices(ctx, {
           purchaseId, customerId, visitId, customerName: nombreCli, items: serviceItems,
         });
@@ -933,18 +938,22 @@ export default function RoyalSalesAIDemo() {
       pregunta.tipo === "multi" ? (respuesta || []).length > 0 :
       !!respuesta;
     return (
-      <ScreenWrap>
+      <div className="h-[100dvh] bg-white max-w-md mx-auto flex flex-col overflow-hidden">
         {Toast}
-        <TopBar title="Encuesta" right={IndicadorGuardado}
-          onBack={() => (qIndex === 0 ? irADashboard() : setQIndex(qIndex - 1))} />
-        <div className="px-5 mb-6">
-          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-orange-500 rounded-full transition-all" style={{ width: `${((qIndex + 1) / PREGUNTAS.length) * 100}%` }} />
+        {/* Zona fija superior: barra + progreso + PREGUNTA siempre visible */}
+        <div className="shrink-0">
+          <TopBar title="Encuesta" right={IndicadorGuardado}
+            onBack={() => (qIndex === 0 ? irADashboard() : setQIndex(qIndex - 1))} />
+          <div className="px-5 mb-3">
+            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-orange-500 rounded-full transition-all" style={{ width: `${((qIndex + 1) / PREGUNTAS.length) * 100}%` }} />
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Pregunta {qIndex + 1} de {PREGUNTAS.length}{!pregunta.requerida && " · opcional"}</p>
           </div>
-          <p className="text-xs text-gray-400 mt-1">Pregunta {qIndex + 1} de {PREGUNTAS.length}{!pregunta.requerida && " · opcional"}</p>
+          <p className="px-5 pb-3 text-xl font-bold text-green-950 leading-snug">{pregunta.texto}</p>
         </div>
-        <div className="px-5 flex-1">
-          <p className="text-xl font-bold text-green-950 mb-5 leading-snug">{pregunta.texto}</p>
+        {/* Zona con scroll propio: SOLO las opciones */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-4">
           {pregunta.tipo === "single" && (
             <div className="space-y-2">
               {pregunta.opciones.map((op) => (
@@ -992,7 +1001,8 @@ export default function RoyalSalesAIDemo() {
             </div>
           )}
         </div>
-        <div className="px-5 pb-8 pt-4">
+        {/* Zona fija inferior: botón SIEMPRE visible, fuera del scroll */}
+        <div className="shrink-0 px-5 pt-3 pb-6 bg-white border-t border-gray-100">
           <Boton onClick={() => (esUltima ? setScreen("infoInterna") : setQIndex(qIndex + 1))} disabled={!puedeAvanzar}>
             {esUltima ? "Continuar" : "Siguiente"} <ChevronRight className="w-4 h-4" />
           </Boton>
@@ -1000,7 +1010,7 @@ export default function RoyalSalesAIDemo() {
             <p className="text-xs text-orange-600 text-center mt-2">Esta pregunta es necesaria para poder analizar al cliente.</p>
           )}
         </div>
-      </ScreenWrap>
+      </div>
     );
   }
 
