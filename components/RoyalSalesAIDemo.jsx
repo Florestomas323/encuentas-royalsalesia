@@ -7,6 +7,7 @@ import {
   Eye, ListChecks, PlayCircle, CloudUpload, Cloud,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { auth } from "@/lib/firebase/client";
 import { normalizePhone, toWhatsAppNumber, isValidPhone } from "@/lib/phone";
 import { calculateOpportunity, OPPORTUNITY_LABELS } from "@/lib/scoring/opportunityScore";
 import {
@@ -50,45 +51,19 @@ const DIAS_FIDELIZACION = [
   { dia: 60, titulo: "Producto complementario" },
 ];
 
-// ---------- CAPA DE IA (se mueve al servidor en la Fase 3C) ----------
-async function llamarIA(prompt) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+// ---------- CAPA DE IA (llama a nuestro backend, nunca al proveedor directamente) ----------
+// La API key vive solo en el servidor. Aquí solo enviamos el token de sesión de
+// Firebase para que el backend verifique quién hace la llamada.
+async function llamarIA(auth, payload) {
+  const token = await auth.currentUser.getIdToken();
+  const res = await fetch("/api/ai/analyze", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1200,
-      messages: [{ role: "user", content: prompt }],
-    }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
   });
-  const data = await response.json();
-  const text = (data.content || []).find((b) => b.type === "text")?.text || "{}";
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
-}
-
-function promptPerfilCliente({ respuestas, infoInterna, observaciones, familySize }) {
-  // Privacidad: no se envía nombre, teléfono ni dirección — solo encuesta anónima.
-  return `Eres un asistente de análisis comercial para asesores de venta directa de utensilios de cocina premium. Analiza esta encuesta y responde ÚNICAMENTE con un JSON válido, sin backticks, en español. Usa "unknown" cuando no haya información suficiente — nunca inventes. No infieras capacidad económica, no hagas afirmaciones médicas, no sugieras presión psicológica.
-
-Encuesta: ${JSON.stringify(respuestas)}
-Información interna de la visita: ${JSON.stringify(infoInterna)}
-Tamaño de familia: ${familySize || "no especificado"}
-Observaciones del vendedor: ${observaciones || "ninguna"}
-
-Formato exacto:
-{
-  "primaryMotivator": "",
-  "secondaryMotivator": "",
-  "mainNeed": "",
-  "customerSummary": "",
-  "emphasisPoints": ["", "", ""],
-  "questionsToAsk": ["", ""],
-  "avoidTopics": ["", ""],
-  "likelyConcerns": ["", ""],
-  "recommendedContent": ["", ""],
-  "interestLevel": "alto | medio | bajo | unknown",
-  "priceSensitivity": "alta | media | baja | unknown"
-}`;
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || "Error de IA");
+  return data.result;
 }
 
 function Boton({ children, onClick, variant = "primary", className = "", disabled }) {
@@ -327,9 +302,13 @@ export default function RoyalSalesAIDemo() {
       await updateVisit(ctx, visitId, { status: "survey_completed" });
     } catch { /* la encuesta sigue en el draft local */ }
     try {
-      const perfil = await llamarIA(promptPerfilCliente({
-        respuestas, infoInterna, observaciones, familySize: prospecto.familySize,
-      }));
+      const perfil = await llamarIA(auth, {
+        type: "customerProfile",
+        responses: respuestas,
+        internalInfo: infoInterna,
+        observations: observaciones,
+        familySize: prospecto.familySize,
+      });
       setPerfilIA(perfil);
       saveAiProfile(ctx, visitId, customerId, perfil).catch(() => {});
       setScreen("perfilRapido");
@@ -348,12 +327,12 @@ export default function RoyalSalesAIDemo() {
     try {
       let contenido = {};
       try {
-        const res = await llamarIA(`Genera contenido personalizado (no fechas) para un plan de fidelización de un cliente que compró utensilios de cocina premium. Responde SOLO JSON sin backticks, en español.
-Perfil: ${JSON.stringify(perfilIA)}
-Producto: ${compraData.producto || "set de cocina"}
-Plato favorito: ${respuestas.favoriteMeal || "no especificado"}
-Formato: {"dia1":"","dia3":"","dia7":"","dia15":"","dia30":"","dia45":"","dia60":""}`);
-        contenido = res || {};
+        contenido = await llamarIA(auth, {
+          type: "loyalty",
+          profile: perfilIA,
+          product: compraData.producto,
+          favoriteMeal: respuestas.favoriteMeal,
+        }) || {};
       } catch { /* plan sin personalización — no bloquea */ }
 
       await savePurchase(ctx, visitId, customerId, {
@@ -393,10 +372,12 @@ Formato: {"dia1":"","dia3":"","dia7":"","dia15":"","dia30":"","dia45":"","dia60"
     try {
       let ia = null;
       try {
-        ia = await llamarIA(`Un prospecto quedó "${resultadoTipo === "lost" ? "sin comprar" : "pendiente"}". Genera diagnóstico y seguimiento. SOLO JSON sin backticks, en español. Mensaje de WhatsApp cálido, breve, sin presión, sin nombre (se inserta después).
-Motivo: ${motivoPendiente}
-Perfil: ${JSON.stringify(perfilIA)}
-Formato: {"objective":"","recommendedApproach":"","recommendedDelayDays":2,"recommendedContent":["",""],"suggestedMessage":""}`);
+        ia = await llamarIA(auth, {
+          type: "followup",
+          outcome: resultadoTipo,
+          reason: motivoPendiente,
+          profile: perfilIA,
+        });
       } catch { /* seguimiento sin IA — no bloquea */ }
       setSeguimientoIA(ia);
       if (ia?.recommendedDelayDays) setDiasSeguimiento(ia.recommendedDelayDays);
