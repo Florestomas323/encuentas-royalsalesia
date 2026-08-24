@@ -4,7 +4,7 @@
 // duplicados y para que pieceIds / parentSetIds resuelvan directamente.
 import { db } from "@/lib/firebase/client";
 import {
-  collection, doc, getDoc, getDocs, query, serverTimestamp, where, writeBatch,
+  collection, doc, getDocs, query, serverTimestamp, where, writeBatch,
 } from "firebase/firestore";
 import type { Ctx } from "@/lib/db/services";
 import { CATALOG_PRODUCTS } from "@/lib/catalog/data";
@@ -48,19 +48,23 @@ export async function seedCatalogIfEmpty(ctx: Ctx): Promise<boolean> {
   const orgId = ctx?.profile?.organizationId;
   if (!orgId) return false;
 
-  // ¿Ya está el catálogo real para ESTA organización? (lectura por id, sin índice)
-  const marker = await getDoc(doc(db, "products", orgDocId(orgId, MARKER_ID)));
-  if (marker.exists()) {
+  // ¿Ya está el catálogo real para ESTA organización?
+  // IMPORTANTE: leer un doc INEXISTENTE bajo reglas que evalúan resource.data
+  // lanza permission-denied (no "no existe"). Por eso la comprobación del
+  // marcador se hace con la consulta org-scoped (permitida siempre), no con
+  // un getDoc directo que explota la primera vez.
+  const previos = await getDocs(query(
+    collection(db, "products"),
+    where("organizationId", "==", orgId),
+  ));
+  const markerDocId = orgDocId(orgId, MARKER_ID);
+  if (previos.docs.some((d) => d.id === markerDocId)) {
     return false;
   }
 
   // Limpieza de una siembra anterior con ids globales (sin prefijo de org):
   // borra los docs de esta org cuyo id de documento no lleve el prefijo, para
   // no dejar duplicados al resembrar con el esquema nuevo.
-  const previos = await getDocs(query(
-    collection(db, "products"),
-    where("organizationId", "==", orgId),
-  ));
   const sinPrefijo = previos.docs.filter((d) => !d.id.startsWith(`${orgId}__`));
   for (let i = 0; i < sinPrefijo.length; i += BATCH_SIZE) {
     const batch = writeBatch(db);
