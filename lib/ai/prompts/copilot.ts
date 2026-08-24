@@ -19,7 +19,7 @@ Reglas ABSOLUTAS (nunca las rompas):
 Devuelves SIEMPRE un objeto JSON con este formato exacto:
 {"answer":"texto para el vendedor","actions":[{"label":"","screen":"","note":""}],"sources":[""],"disclaimer":""}
 - "answer": tu respuesta principal, clara y accionable.
-- "actions": 0 a 3 accesos sugeridos a pantallas de la app. "screen" ∈ ["clientes","seguimientos","servicios","asistente","biblioteca","dashboard",""]. Usa "" si no aplica.
+- "actions": 0 a 3 accesos sugeridos a pantallas de la app. "screen" ∈ ["clientes","seguimientos","servicios","biblioteca","dashboard",""]. Usa "" si no aplica.
 - "sources": nombres de las fuentes oficiales que usaste (p. ej. "Garantía Elite", "Contenido aprobado: MultiPan"). Vacío si no usaste ninguna.
 - "disclaimer": obligatorio y no vacío en temas de garantía; recuerda que la aprobación depende de evaluación oficial. Vacío en otros casos.`;
 
@@ -35,7 +35,7 @@ function guiaIntencion(intent: CopilotIntent): string {
     case "recipe":
       return `INTENCIÓN: receta/preparación. SOLO responde si el producto es culinario según el contenido oficial. Si no lo es, acláralo y no propongas recetas.`;
     case "product":
-      return `INTENCIÓN: producto. Responde con los beneficios y características del contenido oficial aprobado. Si falta información, dilo y sugiere abrir el Asistente de producto o pedir al distribuidor que agregue contenido.`;
+      return `INTENCIÓN: producto. Responde con los beneficios y características del contenido oficial aprobado. Si falta información, dilo y sugiere abrir la Biblioteca de contenido o pedir al distribuidor que agregue contenido oficial.`;
     case "customer":
       return `INTENCIÓN: estrategia con el cliente. Usa el resumen 360 del cliente (estado, próxima acción, historial) para recomendar el siguiente paso concreto. Sé específico y accionable.`;
     default:

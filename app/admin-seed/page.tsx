@@ -13,6 +13,41 @@ export default function AdminSeedPage() {
   const [error, setError] = useState<string | null>(null);
   const [diagnostico, setDiagnostico] = useState<any>(null);
 
+  // Estado independiente para el seed de garantías (colección warrantyKnowledge).
+  const [cargandoGar, setCargandoGar] = useState(false);
+  const [garMsg, setGarMsg] = useState<string | null>(null);
+  const [garError, setGarError] = useState<string | null>(null);
+
+  async function sembrarGarantias() {
+    if (cargandoGar) return;
+    setCargandoGar(true);
+    setGarMsg(null);
+    setGarError(null);
+    try {
+      const response = await fetch("/api/admin/seed-warranty", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret: secreto.trim() }),
+      });
+      let data: any = null;
+      try {
+        data = await response.json();
+      } catch {
+        setGarError("El servidor respondió de forma inesperada. Revisa los logs en Vercel.");
+        return;
+      }
+      if (!response.ok || !data?.ok) {
+        setGarError(data?.error || "No pudimos sembrar las garantías.");
+        return;
+      }
+      setGarMsg(`Listo: ${data.sembrados} garantías oficiales en Firestore. Puedes repetirlo sin duplicar.`);
+    } catch {
+      setGarError("No pudimos conectar con el servidor. Revisa tu conexión.");
+    } finally {
+      setCargandoGar(false);
+    }
+  }
+
   async function ejecutar() {
     if (cargando) return; // evita doble envío
     setCargando(true);
@@ -133,6 +168,39 @@ export default function AdminSeedPage() {
                 <span>{error}</span>
               </div>
             )}
+
+            {/* Seed independiente del conocimiento oficial de garantías. Usa el
+                mismo secreto. Es idempotente: puede reejecutarse sin duplicar. */}
+            <div className="mt-5 pt-5 border-t border-gray-100">
+              <p className="text-xs font-semibold text-gray-500 mb-2">
+                Garantías oficiales (Royal Copilot)
+              </p>
+              <button
+                onClick={sembrarGarantias}
+                disabled={!secreto.trim() || cargandoGar}
+                className="w-full py-3 rounded-xl bg-green-700 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {cargandoGar ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Sembrando garantías…
+                  </>
+                ) : (
+                  "Sembrar 30 garantías oficiales"
+                )}
+              </button>
+              {garMsg && (
+                <div className="mt-3 flex gap-2 text-sm text-green-800 bg-green-50 border border-green-100 rounded-xl p-3">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{garMsg}</span>
+                </div>
+              )}
+              {garError && (
+                <div className="mt-3 flex gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{garError}</span>
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>

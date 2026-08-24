@@ -779,7 +779,10 @@ export default function RoyalSalesAIDemo() {
       const c = clientePorId(payload.customerId);
       if (c) { abrirFicha(c); return; }
     }
-    if (typeof pantalla === "string") setScreen(pantalla);
+    // Lista blanca: solo navegamos a pantallas reales. Evita que una acción
+    // inesperada del modelo deje la app en una pantalla inexistente (en blanco).
+    const PANTALLAS_VALIDAS = ["dashboard", "clientes", "seguimientos", "servicios", "biblioteca"];
+    if (typeof pantalla === "string" && PANTALLAS_VALIDAS.includes(pantalla)) setScreen(pantalla);
   }
   const Copilot = (
     <CopilotWidget
