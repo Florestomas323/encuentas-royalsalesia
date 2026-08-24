@@ -228,7 +228,7 @@ export async function fetchCustomer360(ctx: Ctx, customerId: string): Promise<Cu
   const nextAction = computeNextAction(input);
   const timeline = buildTimeline({ visits, purchases, services, followups });
 
-  const totalAmount = (purchases || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const totalAmount = (purchases as any[] || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
   return {
     customer, purchases, items, services, followups, visits, aiProfiles,
@@ -236,9 +236,9 @@ export async function fetchCustomer360(ctx: Ctx, customerId: string): Promise<Cu
     totals: {
       purchaseCount: (purchases || []).length,
       totalAmount,
-      servicesPending: (services || []).filter((s) => s.status !== "completed").length,
-      followupsPending: (followups || []).filter((f) => f.status === "pending").length,
-      followupsDone: (followups || []).filter((f) => f.status === "completed").length,
+      servicesPending: (services as any[] || []).filter((s) => s.status !== "completed").length,
+      followupsPending: (followups as any[] || []).filter((f) => f.status === "pending").length,
+      followupsDone: (followups as any[] || []).filter((f) => f.status === "completed").length,
     },
   };
 }

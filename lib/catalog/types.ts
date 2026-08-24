@@ -71,6 +71,7 @@ export interface ProductContent {
   content?: string;
   tags?: string[];
   status: ProductContentStatus;
+  isTestData?: boolean;
   source?: "ai" | "manual"; // origen del borrador
   createdBy?: string;
   approvedBy?: string | null;
