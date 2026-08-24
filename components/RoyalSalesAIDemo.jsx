@@ -6,6 +6,7 @@ import {
   ArrowLeft, Clock, AlertCircle, Sparkles, Search, CheckCircle2, XCircle, HelpCircle,
   Eye, ListChecks, PlayCircle, CloudUpload, Cloud, Menu, User, Building2, Settings,
   LogOut, TrendingUp, FlaskConical, CalendarClock, ClipboardList, Trash2, Package, Boxes,
+  Wrench,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { auth } from "@/lib/firebase/client";
@@ -19,15 +20,18 @@ import {
   logInteraction, getInteractionsForCustomer, getRecentVisits, tsToDate,
   softDeleteCustomer, getPurchaseItemsForCustomer, repairFollowupsForDeletedCustomers,
   repairLoyaltyContentForNonCookingCustomers,
+  createPostSaleServices, subscribePostSaleServices, completePostSaleService, assignPostSaleServiceToMe,
 } from "@/lib/db/services";
 import { subscribeProducts } from "@/lib/db/catalog";
 import { seedCatalogIfEmpty, upgradeCatalogCapabilities } from "@/lib/db/seed";
 import {
   classifyFamily, capabilitiesFor, buildLoyaltyPlan, allowedContentTypes,
+  serviceTypeLabel, serviceChecklistFor,
 } from "@/lib/catalog/classify";
 import { getOrgCurrency, formatCurrency, parseAmount } from "@/lib/format/currency";
 import ProductPicker from "@/components/catalog/ProductPicker";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
+import ServiceSheet from "@/components/services/ServiceSheet";
 
 // ---------- ENCUESTA (claves semánticas camelCase — solo preguntas para el cliente) ----------
 const PREGUNTAS = [
@@ -181,6 +185,11 @@ export default function RoyalSalesAIDemo() {
   const [confirmarEliminar, setConfirmarEliminar] = useState(null); // cliente a eliminar
   const [eliminando, setEliminando] = useState(false);
 
+  // Fase B: servicios postventa pendientes + hoja de detalle.
+  const [servicios, setServicios] = useState(null);
+  const [servicioAbierto, setServicioAbierto] = useState(null);
+  const [completandoServicio, setCompletandoServicio] = useState(false);
+
   const draftTimer = useRef(null);
 
   function mostrarToast(msg) {
@@ -208,6 +217,7 @@ export default function RoyalSalesAIDemo() {
     const un1 = subscribeCustomers(ctx, setClientes, () => setClientes([]));
     const un2 = subscribeFollowups(ctx, setFollowups, () => setFollowups([]));
     const un3 = subscribeProducts(ctx, setProductos, () => setProductos([]));
+    const un4 = subscribePostSaleServices(ctx, setServicios, () => setServicios([]));
     // Sembrar catálogo real una sola vez (idempotente); al terminar, asegurar
     // que todos los productos tengan flags de contenido (supportsRecipes, etc.).
     seedCatalogIfEmpty(ctx)
@@ -218,7 +228,7 @@ export default function RoyalSalesAIDemo() {
     // 2) quitar recetas de planes de clientes sin productos culinarios.
     repairFollowupsForDeletedCustomers(ctx).catch((e) => console.log("[v0] repair followups:", e?.message));
     repairLoyaltyContentForNonCookingCustomers(ctx).catch((e) => console.log("[v0] repair recetas:", e?.message));
-    return () => { un1(); un2(); un3(); };
+    return () => { un1(); un2(); un3(); un4(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.organizationId]);
 
@@ -239,6 +249,50 @@ export default function RoyalSalesAIDemo() {
       return activos.has(f.customerId);
     });
   }, [followups, clientes]);
+
+  // Servicios postventa pendientes cuyo cliente no esté eliminado.
+  const serviciosPendientes = useMemo(() => {
+    if (!Array.isArray(servicios)) return servicios; // null mientras carga
+    const activos = new Set((clientes || []).map((c) => c.id));
+    return servicios.filter((s) => (Array.isArray(clientes) ? activos.has(s.customerId) : true));
+  }, [servicios, clientes]);
+
+  // Conjunto de customerId con al menos un servicio pendiente (aviso en ficha).
+  const clientesConServicio = useMemo(
+    () => new Set((serviciosPendientes || []).map((s) => s.customerId)),
+    [serviciosPendientes],
+  );
+
+  const numServiciosPendientes = Array.isArray(serviciosPendientes) ? serviciosPendientes.length : 0;
+  const esManager = profile?.role === "distributor" || profile?.role === "reviewer";
+
+  async function completarServicioHandler(pasos) {
+    if (!servicioAbierto) return;
+    setCompletandoServicio(true);
+    try {
+      await completePostSaleService(ctx, servicioAbierto.id, pasos);
+      setServicioAbierto(null);
+      mostrarToast("Servicio completado. Se activó el plan de fidelización.");
+    } catch (e) {
+      mostrarToast(e?.message || "No se pudo completar el servicio.");
+    } finally {
+      setCompletandoServicio(false);
+    }
+  }
+
+  async function asignarmeServicioHandler() {
+    if (!servicioAbierto) return;
+    setCompletandoServicio(true);
+    try {
+      await assignPostSaleServiceToMe(ctx, servicioAbierto.id);
+      setServicioAbierto((s) => (s ? { ...s, assignedSalespersonId: user.uid } : s));
+      mostrarToast("Servicio asignado a ti.");
+    } catch (e) {
+      mostrarToast(e?.message || "No se pudo reasignar.");
+    } finally {
+      setCompletandoServicio(false);
+    }
+  }
 
   // ---------- visita en progreso + métricas ----------
   const cargarDashboard = useCallback(async () => {
@@ -420,7 +474,21 @@ export default function RoyalSalesAIDemo() {
         }) || {};
       } catch { /* plan sin personalización — no bloquea */ }
 
-      await savePurchaseWithItems(
+      // Productos que requieren servicio postventa (solo desde el catálogo).
+      const serviceItems = itemsCompra
+        .map((it) => catalogoPorId.get(it.productId))
+        .filter((p) => p && p.requiresPostSaleService)
+        .map((p) => ({
+          productId: p.id,
+          productName: p.name,
+          serviceType: p.postSaleServiceType || "testing_training",
+          keepPackagedUntilService: !!p.keepPackagedUntilService,
+          checklist: serviceChecklistFor(p),
+        }));
+      const requiereServicio = serviceItems.length > 0;
+      const planData = planPasos.map((p) => ({ dia: p.dia, titulo: p.titulo, contentType: p.contentType }));
+
+      const purchaseId = await savePurchaseWithItems(
         ctx, visitId, customerId,
         {
           amount: parseAmount(compraData.monto),
@@ -428,6 +496,12 @@ export default function RoyalSalesAIDemo() {
           currency: orgCurrency.currency,
           products: nombresProductos,
           notes: "",
+          hasPendingService: requiereServicio,
+          // Con servicio pendiente, el plan queda EN ESPERA: se activa al
+          // completar el último servicio (recordatorios desde esa fecha).
+          pendingLoyalty: requiereServicio
+            ? { active: true, plan: planData, contenido, supportsRecipes: admiteRecetas }
+            : null,
         },
         itemsCompra,
       );
@@ -436,20 +510,32 @@ export default function RoyalSalesAIDemo() {
       await updateCustomer(ctx, customerId, { status: "purchased" });
 
       const plan = [];
-      for (const { dia, titulo, contentType } of planPasos) {
-        const scheduledAt = new Date(Date.now() + dia * 86400000);
-        await createFollowup(ctx, {
-          customerId, visitId, type: "loyalty",
-          contentType, supportsRecipes: admiteRecetas,
-          scheduledAt, objective: titulo,
-          suggestedMessage: contenido[`dia${dia}`] || "",
+      if (requiereServicio) {
+        // Crear los servicios postventa; los seguimientos NO se agendan aún.
+        const cliActual = (clientes || []).find((c) => c.id === customerId);
+        const nombreCli = cliActual ? `${cliActual.firstName || ""} ${cliActual.lastName || ""}`.trim() : "";
+        await createPostSaleServices(ctx, {
+          purchaseId, customerId, visitId, customerName: nombreCli, items: serviceItems,
         });
-        plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "" });
+        for (const { dia, titulo } of planPasos) {
+          plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "", pendiente: true });
+        }
+      } else {
+        for (const { dia, titulo, contentType } of planPasos) {
+          const scheduledAt = new Date(Date.now() + dia * 86400000);
+          await createFollowup(ctx, {
+            customerId, visitId, type: "loyalty",
+            contentType, supportsRecipes: admiteRecetas,
+            scheduledAt, objective: titulo,
+            suggestedMessage: contenido[`dia${dia}`] || "",
+          });
+          plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "" });
+        }
       }
       setPlanFidelizacion(plan);
       setItemsCompra([]);
       try { localStorage.removeItem(`rsai-draft-${visitId}`); } catch {}
-      mostrarToast("Compra y plan guardados");
+      mostrarToast(plan.some((p) => p.pendiente) ? "Compra guardada. Programa el servicio postventa." : "Compra y plan guardados");
       setScreen("planFidelizacion");
     } catch {
       mostrarToast("No pudimos guardar. Intenta de nuevo.");
@@ -602,7 +688,7 @@ export default function RoyalSalesAIDemo() {
     });
     const abrirNuevaVisita = () => { limpiarFlujo(); setScreen("nuevaVisita"); };
     return (
-      <Shell active="dashboard" setScreen={setScreen} onNueva={abrirNuevaVisita}>
+      <Shell active="dashboard" setScreen={setScreen} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
         {Toast}
         <div className="bg-brand-deep rounded-b-[2rem] px-5 pt-7 pb-8">
           <p className="text-emerald-300/80 text-sm">Hola,</p>
@@ -1015,9 +1101,17 @@ export default function RoyalSalesAIDemo() {
         {Toast}
         <TopBar title="Plan de fidelización" />
         <div className="px-5 flex-1 space-y-3">
+          {(planFidelizacion || []).some((p) => p.pendiente) && (
+            <div className="flex items-start gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
+              <Package className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2} />
+              <p className="text-[13px] text-amber-800 leading-snug">
+                Este producto requiere un servicio postventa (curado, prueba o instalación). El plan queda en espera y sus recordatorios comenzarán a contar cuando completes el servicio en la pestaña <span className="font-semibold">Servicios</span>.
+              </p>
+            </div>
+          )}
           {(planFidelizacion || []).map((p) => (
             <div key={p.dia} className="flex gap-3 bg-white border border-gray-100 rounded-xl p-4">
-              <div className="w-12 h-12 rounded-full bg-green-800 text-white flex flex-col items-center justify-center text-xs font-bold shrink-0">
+              <div className={`w-12 h-12 rounded-full text-white flex flex-col items-center justify-center text-xs font-bold shrink-0 ${p.pendiente ? "bg-gray-400" : "bg-green-800"}`}>
                 <span>{p.dia}</span>
                 <span className="text-[8px] font-normal">día{p.dia > 1 ? "s" : ""}</span>
               </div>
@@ -1027,7 +1121,11 @@ export default function RoyalSalesAIDemo() {
               </div>
             </div>
           ))}
-          <p className="text-xs text-gray-400">Cada punto ya quedó guardado como seguimiento real con su fecha — los verás en la pestaña Seguimientos.</p>
+          <p className="text-xs text-gray-400">
+            {(planFidelizacion || []).some((p) => p.pendiente)
+              ? "Los seguimientos se agendarán automáticamente al completar el servicio postventa."
+              : "Cada punto ya quedó guardado como seguimiento real con su fecha — los verás en la pestaña Seguimientos."}
+          </p>
         </div>
         <div className="px-5 py-6">
           <Boton onClick={irADashboard}>Finalizar</Boton>
@@ -1125,7 +1223,7 @@ export default function RoyalSalesAIDemo() {
       ["pending", ETIQUETA_ESTADO.pending || "Pendiente"],
     ];
     return (
-      <Shell active="clientes" setScreen={setScreen} onNueva={abrirNuevaVisita}>
+      <Shell active="clientes" setScreen={setScreen} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
         {Toast}
         <TopBar title="Clientes" subtitle={clientes ? `${clientes.length} en total` : undefined} />
 
@@ -1392,11 +1490,11 @@ export default function RoyalSalesAIDemo() {
   return null;
 }
 
-function Shell({ children, active, setScreen, onNueva }) {
+function Shell({ children, active, setScreen, onNueva, serviciosBadge = 0 }) {
   return (
     <div className="min-h-screen bg-surface max-w-md mx-auto flex flex-col">
       <div className="flex-1 flex flex-col">{children}</div>
-      <NavInline active={active} setScreen={setScreen} onNueva={onNueva} />
+      <NavInline active={active} setScreen={setScreen} onNueva={onNueva} serviciosBadge={serviciosBadge} />
     </div>
   );
 }
@@ -1405,22 +1503,27 @@ function ScreenWrap({ children }) {
   return <div className="min-h-screen bg-surface max-w-md mx-auto flex flex-col">{children}</div>;
 }
 
-function NavTab({ id, label, icon: Icon, active, setScreen }) {
+function NavTab({ id, label, icon: Icon, active, setScreen, badge = 0 }) {
   const on = active === id;
   return (
     <button
       onClick={() => setScreen(id)}
-      aria-label={label}
+      aria-label={badge > 0 ? `${label}, ${badge} pendientes` : label}
       aria-current={on ? "page" : undefined}
-      className="flex flex-col items-center gap-1 w-16 py-1 min-h-[44px]"
+      className="relative flex flex-col items-center gap-1 w-16 py-1 min-h-[44px]"
     >
+      {badge > 0 && (
+        <span className="absolute top-0 right-3 min-w-[16px] h-4 px-1 rounded-full bg-accent text-white text-[9px] font-bold grid place-items-center leading-none">
+          {badge > 9 ? "9+" : badge}
+        </span>
+      )}
       <Icon className={`w-[22px] h-[22px] transition-colors ${on ? "text-brand-dark" : "text-muted/55"}`} strokeWidth={on ? 2.4 : 1.9} />
       <span className={`text-[10px] font-medium transition-colors ${on ? "text-brand-dark" : "text-muted/55"}`}>{label}</span>
     </button>
   );
 }
 
-function NavInline({ active, setScreen, onNueva }) {
+function NavInline({ active, setScreen, onNueva, serviciosBadge = 0 }) {
   return (
     <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 max-w-md w-full bg-card border-t border-hairline shadow-nav z-30">
       <div className="flex items-center justify-around px-2 pt-1.5 pb-1.5 safe-bottom">
@@ -1437,7 +1540,7 @@ function NavInline({ active, setScreen, onNueva }) {
           <span className="text-[10px] font-semibold text-brand-dark mt-1">Visita</span>
         </button>
         <NavTab id="seguimientos" label="Seguim." icon={Calendar} active={active} setScreen={setScreen} />
-        <NavTab id="mas" label="Más" icon={Menu} active={active} setScreen={setScreen} />
+        <NavTab id="servicios" label="Servicios" icon={Wrench} active={active} setScreen={setScreen} badge={serviciosBadge} />
       </div>
     </nav>
   );

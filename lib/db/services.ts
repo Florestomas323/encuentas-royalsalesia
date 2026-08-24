@@ -435,6 +435,170 @@ export async function getFollowupsForCustomer(ctx: Ctx, customerId: string) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
+// ---------- SERVICIOS POSTVENTA (Fase B) ----------
+// Productos que deben mantenerse empacados hasta un servicio presencial
+// (curado, prueba/capacitación, instalación). Mientras haya servicios
+// pendientes de una compra, su plan de fidelización queda EN ESPERA; los
+// recordatorios arrancan cuando se completa el último servicio.
+
+export type ServiceItemInput = {
+  productId: string;
+  productName: string;
+  serviceType: string;
+  keepPackagedUntilService: boolean;
+  checklist: string[];
+  quantity?: number;
+};
+
+/** Crea un servicio postventa por cada producto que lo requiere. Devuelve IDs. */
+export async function createPostSaleServices(
+  ctx: Ctx,
+  args: { purchaseId: string; customerId: string; visitId: string; customerName?: string; items: ServiceItemInput[] },
+): Promise<string[]> {
+  const valid = args.items.filter((it) => it.productId && it.serviceType);
+  if (!valid.length) return [];
+  const ids: string[] = [];
+  const base = baseFields(ctx);
+  const batch = writeBatch(db);
+  for (const it of valid) {
+    const ref = doc(collection(db, "postSaleServices"));
+    batch.set(ref, {
+      purchaseId: args.purchaseId,
+      customerId: args.customerId,
+      visitId: args.visitId,
+      customerName: args.customerName ?? "",
+      productId: it.productId,
+      productName: it.productName,
+      serviceType: it.serviceType,
+      keepPackagedUntilService: !!it.keepPackagedUntilService,
+      quantity: it.quantity ?? 1,
+      checklist: it.checklist.map((label) => ({ label, done: false })),
+      status: "pending",
+      assignedSalespersonId: ctx.uid,
+      completedAt: null,
+      completedBy: null,
+      ...base,
+    });
+    ids.push(ref.id);
+  }
+  await batch.commit();
+  return ids;
+}
+
+/** Suscribe a los servicios postventa PENDIENTES (badge + pantalla Servicios). */
+export function subscribePostSaleServices(ctx: Ctx, cb: (rows: any[]) => void, onError?: () => void) {
+  const clauses: any[] = [
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("status", "==", "pending"),
+  ];
+  // El distribuidor/reviewer ve todos los de la organización; el vendedor solo los suyos.
+  if (!isOrgManager(ctx)) clauses.push(where("assignedSalespersonId", "==", ctx.uid));
+  const q = query(collection(db, "postSaleServices"), ...clauses);
+  return onSnapshot(
+    q,
+    (snap) => cb(sortByDateAsc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt")),
+    onError,
+  );
+}
+
+export async function getPostSaleServicesForCustomer(ctx: Ctx, customerId: string) {
+  const snap = await getDocs(query(
+    collection(db, "postSaleServices"),
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("customerId", "==", customerId),
+  ));
+  return sortByDateAsc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt");
+}
+
+/**
+ * Completa un servicio: guarda el estado del checklist y lo marca como
+ * completado. Solo el vendedor asignado o un distribuidor/reviewer pueden.
+ * Al completarlo, si ya no quedan servicios pendientes de esa compra, activa el
+ * plan de fidelización diferido (recordatorios desde HOY).
+ */
+export async function completePostSaleService(
+  ctx: Ctx,
+  serviceId: string,
+  checklist: { label: string; done: boolean }[],
+) {
+  const ref = doc(db, "postSaleServices", serviceId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("El servicio no existe.");
+  const s = snap.data() as any;
+  if (s.organizationId !== ctx.profile.organizationId) throw new Error("Servicio de otra organización.");
+  const esDueno = s.assignedSalespersonId === ctx.uid;
+  if (!isOrgManager(ctx) && !esDueno) throw new Error("No puedes completar este servicio.");
+  if (!checklist.every((c) => c.done)) throw new Error("Debes completar todos los pasos del checklist.");
+
+  await updateDoc(ref, {
+    checklist,
+    status: "completed",
+    completedAt: serverTimestamp(),
+    completedBy: ctx.uid,
+    updatedBy: ctx.uid,
+    updatedAt: serverTimestamp(),
+  });
+
+  await maybeActivateDeferredLoyalty(ctx, s.purchaseId);
+}
+
+/** El distribuidor/reviewer se asigna un servicio de la organización (reasignar). */
+export async function assignPostSaleServiceToMe(ctx: Ctx, serviceId: string) {
+  if (!isOrgManager(ctx)) throw new Error("Solo un distribuidor puede reasignar servicios.");
+  const ref = doc(db, "postSaleServices", serviceId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("El servicio no existe.");
+  if ((snap.data() as any).organizationId !== ctx.profile.organizationId) throw new Error("Servicio de otra organización.");
+  await updateDoc(ref, { assignedSalespersonId: ctx.uid, updatedBy: ctx.uid, updatedAt: serverTimestamp() });
+}
+
+/**
+ * Si una compra ya no tiene servicios pendientes y tiene un plan de
+ * fidelización en espera (pendingLoyalty.active), crea los seguimientos con
+ * fechas contadas desde HOY y marca el plan como activado. Idempotente.
+ */
+async function maybeActivateDeferredLoyalty(ctx: Ctx, purchaseId: string) {
+  if (!purchaseId) return;
+  const purchaseRef = doc(db, "purchases", purchaseId);
+  const purchaseSnap = await getDoc(purchaseRef);
+  if (!purchaseSnap.exists()) return;
+  const purchase = purchaseSnap.data() as any;
+  const pending = purchase.pendingLoyalty;
+  if (!pending || pending.active !== true) return; // sin plan diferido o ya activado
+
+  // ¿Quedan servicios pendientes de esta compra?
+  const servSnap = await getDocs(query(
+    collection(db, "postSaleServices"),
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("purchaseId", "==", purchaseId),
+  ));
+  const quedanPendientes = servSnap.docs.some((d) => (d.data() as any).status !== "completed");
+  if (quedanPendientes) return;
+
+  // Activar: crear seguimientos desde HOY según el plan guardado.
+  const plan: { dia: number; titulo: string; contentType: string }[] = Array.isArray(pending.plan) ? pending.plan : [];
+  const contenido: Record<string, string> = pending.contenido || {};
+  const supportsRecipes = pending.supportsRecipes === true;
+  const now = Date.now();
+  for (const step of plan) {
+    await createFollowup(ctx, {
+      customerId: purchase.customerId,
+      visitId: purchase.visitId,
+      type: "loyalty",
+      contentType: step.contentType,
+      supportsRecipes,
+      scheduledAt: new Date(now + step.dia * 86400000),
+      objective: step.titulo,
+      suggestedMessage: contenido[`dia${step.dia}`] || "",
+    });
+  }
+  await updateDoc(purchaseRef, {
+    "pendingLoyalty.active": false,
+    loyaltyActivatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 // ---------- INTERACCIONES ----------
 export async function logInteraction(ctx: Ctx, customerId: string, followupId: string | null, action: string) {
   await addDoc(collection(db, "customerInteractions"), {

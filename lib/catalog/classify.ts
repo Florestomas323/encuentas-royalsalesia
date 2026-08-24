@@ -185,3 +185,66 @@ export function allowedContentTypes(caps: ContentCapabilities): ContentType[] {
   if (caps.supportsInstallationTips) base.push("installation_tip");
   return base;
 }
+
+// ---------- Servicio postventa (Fase B) ----------
+// Algunos productos deben mantenerse EMPACADOS hasta que el vendedor haga un
+// servicio postventa presencial (curado de ollas, prueba/capacitación de un
+// electrodoméstico, instalación de filtración). El catálogo ya trae
+// postSaleServiceType, keepPackagedUntilService y serviceChecklist; aquí
+// centralizamos etiquetas y un checklist de respaldo por si algún producto no
+// lo trae.
+
+export type ServiceType = "curing_preparation" | "testing_training" | "installation";
+
+const SERVICE_LABELS: Record<ServiceType, string> = {
+  curing_preparation: "Curado y preparación",
+  testing_training: "Prueba y capacitación",
+  installation: "Instalación",
+};
+
+export function serviceTypeLabel(t?: string | null): string {
+  if (t && t in SERVICE_LABELS) return SERVICE_LABELS[t as ServiceType];
+  return "Servicio postventa";
+}
+
+const FALLBACK_CHECKLISTS: Record<ServiceType, string[]> = {
+  curing_preparation: [
+    "Desempacar el producto junto al cliente",
+    "Lavar y secar cada pieza",
+    "Realizar el curado/preparación inicial",
+    "Explicar el uso correcto de la tapa y el control de temperatura",
+    "Resolver dudas del cliente",
+    "Confirmar satisfacción con la preparación",
+  ],
+  testing_training: [
+    "Desempacar el producto junto al cliente",
+    "Verificar que enciende y funciona correctamente",
+    "Hacer una prueba de funcionamiento con el cliente",
+    "Explicar el uso y las funciones principales",
+    "Explicar limpieza y cuidado",
+    "Confirmar satisfacción del cliente",
+  ],
+  installation: [
+    "Verificar el punto de instalación",
+    "Instalar el producto",
+    "Comprobar que no haya fugas / que funcione",
+    "Explicar el uso correcto",
+    "Explicar el mantenimiento y el cambio de filtro",
+    "Confirmar satisfacción del cliente",
+  ],
+};
+
+/**
+ * Devuelve el checklist a usar para un servicio: el del producto si existe, o
+ * el de respaldo según el tipo. Siempre devuelve al menos un paso.
+ */
+export function serviceChecklistFor(p: {
+  postSaleServiceType?: string | null;
+  serviceChecklist?: string[] | null;
+}): string[] {
+  if (Array.isArray(p.serviceChecklist) && p.serviceChecklist.length) {
+    return [...p.serviceChecklist];
+  }
+  const t = p.postSaleServiceType as ServiceType;
+  return [...(FALLBACK_CHECKLISTS[t] || FALLBACK_CHECKLISTS.testing_training)];
+}
