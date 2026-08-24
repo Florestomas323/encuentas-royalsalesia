@@ -55,18 +55,27 @@ export interface Product extends CatalogProduct {
 }
 
 /**
- * ProductContent: modelo RESERVADO para la Fase C (recetas, tips, cuidado).
- * NO se siembra en Fase A porque el catálogo real no incluye contenido oficial.
+ * ProductContent (Fase C): contenido OFICIAL por producto (recetas, tips,
+ * cuidado, mantenimiento, FAQ...). Nace como borrador generado por IA y solo la
+ * IA de fidelización/asistente lo usa cuando el distribuidor lo APRUEBA.
  */
+export type ProductContentStatus = "draft" | "approved" | "rejected";
+
 export interface ProductContent {
   id: string;
   organizationId: string;
   productId: string;
-  type: string;
+  productName?: string;
+  type: string;          // contentType permitido: recipe, usage_tip, care, maintenance, faq...
   title: string;
   content?: string;
   tags?: string[];
-  active?: boolean;
+  status: ProductContentStatus;
+  source?: "ai" | "manual"; // origen del borrador
+  createdBy?: string;
+  approvedBy?: string | null;
+  approvedAt?: unknown | null;
+  active?: boolean;      // compat (approved => active)
   createdAt?: unknown;
   updatedAt?: unknown;
 }

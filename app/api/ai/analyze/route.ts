@@ -7,10 +7,29 @@ import {
   loyaltyPrompt,
 } from "@/lib/ai/prompts/customerProfile";
 import {
+  productContentDraftPrompt,
+  productAssistantPrompt,
+} from "@/lib/ai/prompts/productContent";
+import {
   validateCustomerProfile,
   validateFollowup,
   validateLoyalty,
+  validateContentDraft,
+  validateProductAnswer,
 } from "@/lib/ai/validate";
+
+// Sanea una lista de contenido oficial recibida del cliente (defensa servidor).
+function sanitizeOfficialContent(raw: any): { type: string; title: string; content?: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c) => c && typeof c.title === "string")
+    .slice(0, 20)
+    .map((c) => ({
+      type: String(c.type || "").slice(0, 40),
+      title: String(c.title).slice(0, 200),
+      content: typeof c.content === "string" ? c.content.slice(0, 2000) : "",
+    }));
+}
 
 // El análisis usa el service account de Firebase (Node), no Edge.
 export const runtime = "nodejs";
@@ -63,6 +82,8 @@ export async function POST(req: Request) {
         outcome: body.outcome,
         reason: body.reason || "",
         profile: body.profile,
+        currency: typeof body.currency === "string" ? body.currency : "COP",
+        locale: typeof body.locale === "string" ? body.locale : "es-CO",
       });
       const raw = await runAI(prompt, 700);
       const result = validateFollowup(raw);
@@ -88,6 +109,7 @@ export async function POST(req: Request) {
         productCategory: typeof body.productCategory === "string" ? body.productCategory : "",
         allowedContentTypes: allowed,
         plan,
+        officialContent: sanitizeOfficialContent(body.officialContent),
         currency: typeof body.currency === "string" ? body.currency : "COP",
         locale: typeof body.locale === "string" ? body.locale : "es-CO",
       });
@@ -95,6 +117,40 @@ export async function POST(req: Request) {
       // Refuerzo servidor: si el producto NO admite recetas, ninguna etapa de
       // tipo receta debe existir (el plan ya no la incluye, pero por si acaso).
       const result = validateLoyalty(raw, plan.map((p) => p.dia));
+      return NextResponse.json({ ok: true, result });
+    }
+
+    if (type === "productContentDraft") {
+      const allowed: string[] = Array.isArray(body.allowedContentTypes)
+        ? body.allowedContentTypes.filter((x: any) => typeof x === "string")
+        : [];
+      const requested: string[] = Array.isArray(body.requestedTypes)
+        ? body.requestedTypes.filter((x: any) => typeof x === "string")
+        : [];
+      const prompt = productContentDraftPrompt({
+        productName: body.productName || "producto",
+        productCategory: typeof body.productCategory === "string" ? body.productCategory : "",
+        supportsRecipes: body.supportsRecipes === true,
+        allowedContentTypes: allowed,
+        requestedTypes: requested,
+        currency: typeof body.currency === "string" ? body.currency : "COP",
+        locale: typeof body.locale === "string" ? body.locale : "es-CO",
+      });
+      const raw = await runAI(prompt, 1600);
+      const result = validateContentDraft(raw, allowed);
+      return NextResponse.json({ ok: true, result });
+    }
+
+    if (type === "productAssistant") {
+      const question = typeof body.question === "string" ? body.question.trim().slice(0, 500) : "";
+      if (!question) return fail("Escribe una pregunta.");
+      const prompt = productAssistantPrompt({
+        productName: body.productName || "producto",
+        question,
+        officialContent: sanitizeOfficialContent(body.officialContent),
+      });
+      const raw = await runAI(prompt, 800);
+      const result = validateProductAnswer(raw);
       return NextResponse.json({ ok: true, result });
     }
 

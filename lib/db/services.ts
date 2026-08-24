@@ -20,7 +20,7 @@ function baseFields(ctx: Ctx) {
   };
 }
 
-function isOrgManager(ctx: Ctx) {
+export function isOrgManager(ctx: Ctx) {
   return ctx.profile.role === "distributor" || ctx.profile.role === "reviewer";
 }
 

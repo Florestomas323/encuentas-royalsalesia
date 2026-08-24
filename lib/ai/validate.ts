@@ -66,3 +66,29 @@ export function validateLoyalty(raw: any, dias: number[] = [1, 3, 7, 15, 30, 45,
   for (const d of dias) out[`dia${d}`] = str(raw?.[`dia${d}`]);
   return out;
 }
+
+// Fase C: borradores de contenido oficial. Cada item debe tener un tipo
+// permitido, título y contenido; se descartan los que no cumplan.
+export function validateContentDraft(raw: any, allowedTypes: string[] = []) {
+  const arr = Array.isArray(raw?.items) ? raw.items : [];
+  const items = arr
+    .map((it: any) => ({
+      type: str(it?.type),
+      title: str(it?.title),
+      content: str(it?.content),
+    }))
+    .filter((it: any) => it.title && it.content && (!allowedTypes.length || allowedTypes.includes(it.type)))
+    .slice(0, 12);
+  if (!items.length) throw new Error("La IA no generó contenido válido.");
+  return { items };
+}
+
+// Fase C: respuesta del asistente de producto.
+export function validateProductAnswer(raw: any) {
+  const answer = str(raw?.answer);
+  return {
+    answer: answer || "No hay información oficial disponible sobre eso todavía.",
+    hasAnswer: raw?.hasAnswer === true && !!answer,
+    sources: strArray(raw?.sources, 6),
+  };
+}

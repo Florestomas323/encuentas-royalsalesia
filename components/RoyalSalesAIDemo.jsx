@@ -6,7 +6,7 @@ import {
   ArrowLeft, Clock, AlertCircle, Sparkles, Search, CheckCircle2, XCircle, HelpCircle,
   Eye, ListChecks, PlayCircle, CloudUpload, Cloud, Menu, User, Building2, Settings,
   LogOut, TrendingUp, FlaskConical, CalendarClock, ClipboardList, Trash2, Package, Boxes,
-  Wrench,
+  Wrench, BookOpen, Bot, Send,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { auth } from "@/lib/firebase/client";
@@ -22,16 +22,21 @@ import {
   repairLoyaltyContentForNonCookingCustomers,
   createPostSaleServices, subscribePostSaleServices, completePostSaleService, assignPostSaleServiceToMe,
 } from "@/lib/db/services";
-import { subscribeProducts } from "@/lib/db/catalog";
+import {
+  subscribeProducts, subscribeProductContent, getApprovedProductContent,
+  createProductContent, updateProductContent, deleteProductContent, setProductContentStatus,
+} from "@/lib/db/catalog";
 import { seedCatalogIfEmpty, upgradeCatalogCapabilities } from "@/lib/db/seed";
 import {
   classifyFamily, capabilitiesFor, buildLoyaltyPlan, allowedContentTypes,
-  serviceTypeLabel, serviceChecklistFor,
+  serviceTypeLabel, serviceChecklistFor, tituloDe,
 } from "@/lib/catalog/classify";
 import { getOrgCurrency, formatCurrency, parseAmount } from "@/lib/format/currency";
 import ProductPicker from "@/components/catalog/ProductPicker";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import ServiceSheet from "@/components/services/ServiceSheet";
+import ContentLibrary from "@/components/content/ContentLibrary";
+import ProductAssistant from "@/components/content/ProductAssistant";
 
 // ---------- ENCUESTA (claves semánticas camelCase — solo preguntas para el cliente) ----------
 const PREGUNTAS = [
@@ -459,6 +464,15 @@ export default function RoyalSalesAIDemo() {
       const admiteRecetas = capsCombinadas.supportsRecipes;
       const categoriaRep = productosComprados.map((p) => p.category).filter(Boolean).join(", ") || "no especificada";
 
+      // Contenido OFICIAL aprobado de los productos comprados (Fase C): única
+      // fuente técnica para la IA. Si no hay, la IA no inventa datos.
+      let officialContent = [];
+      try {
+        const ids = [...new Set(itemsCompra.map((it) => it.productId).filter(Boolean))];
+        const listas = await Promise.all(ids.map((id) => getApprovedProductContent(ctx, id)));
+        officialContent = listas.flat().map((c) => ({ type: c.type, title: c.title, content: c.content }));
+      } catch { /* sin contenido aprobado — la IA queda sin datos técnicos */ }
+
       let contenido = {};
       try {
         contenido = await llamarIA(auth, {
@@ -470,6 +484,7 @@ export default function RoyalSalesAIDemo() {
           productCategory: categoriaRep,
           allowedContentTypes: allowedContentTypes(capsCombinadas),
           plan: planPasos.map((p) => ({ dia: p.dia, contentType: p.contentType })),
+          officialContent,
           currency: orgCurrency.currency,
           locale: orgCurrency.locale,
         }) || {};

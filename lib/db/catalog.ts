@@ -4,9 +4,10 @@
 // índices compuestos de Firestore.
 import { db } from "@/lib/firebase/client";
 import {
-  addDoc, collection, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where,
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where,
 } from "firebase/firestore";
 import type { Ctx } from "@/lib/db/services";
+import { isOrgManager } from "@/lib/db/services";
 import type { Product, ProductContent } from "@/lib/catalog/types";
 
 // Orden en memoria (sin índices Firestore): sets primero, luego alfabético.
@@ -65,7 +66,11 @@ export async function updateProduct(ctx: Ctx, id: string, data: Partial<Product>
   await updateDoc(doc(db, "products", id), { ...data, updatedBy: ctx.uid, updatedAt: serverTimestamp() });
 }
 
-// ---------- CONTENIDO DE PRODUCTO (recetas, tips) ----------
+// ---------- CONTENIDO DE PRODUCTO (Fase C: recetas, tips, cuidado, FAQ) ----------
+// El contenido nace como borrador (draft) y solo la IA lo usa cuando está
+// APROBADO. Se filtra por igualdad y se ordena en memoria (sin índices).
+
+/** Todo el contenido de un producto (cualquier estado). Para la biblioteca. */
 export async function getProductContent(ctx: Ctx, productId: string): Promise<ProductContent[]> {
   const snap = await getDocs(query(
     collection(db, "productContent"),
@@ -76,14 +81,71 @@ export async function getProductContent(ctx: Ctx, productId: string): Promise<Pr
   return bySortOrder(rows);
 }
 
+/** Suscripción en vivo a todo el contenido de la organización (biblioteca). */
+export function subscribeProductContent(ctx: Ctx, cb: (rows: ProductContent[]) => void, onError?: () => void) {
+  const q = query(
+    collection(db, "productContent"),
+    where("organizationId", "==", ctx.profile.organizationId),
+  );
+  return onSnapshot(
+    q,
+    (snap) => cb(bySortOrder(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as ProductContent[])),
+    onError,
+  );
+}
+
+/** Solo el contenido APROBADO de un producto (única fuente para la IA). */
+export async function getApprovedProductContent(ctx: Ctx, productId: string): Promise<ProductContent[]> {
+  const all = await getProductContent(ctx, productId);
+  return all.filter((c) => c.status === "approved");
+}
+
 export async function createProductContent(ctx: Ctx, data: Partial<ProductContent>) {
   const ref = await addDoc(collection(db, "productContent"), {
     ...data,
     organizationId: ctx.profile.organizationId,
+    status: (data.status as any) || "draft",
+    source: data.source || "manual",
+    active: false,
+    approvedBy: null,
+    approvedAt: null,
     createdBy: ctx.uid,
     createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   });
   return ref.id;
+}
+
+export async function updateProductContent(ctx: Ctx, id: string, data: Partial<ProductContent>) {
+  await updateDoc(doc(db, "productContent", id), {
+    ...data,
+    updatedBy: ctx.uid,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteProductContent(ctx: Ctx, id: string) {
+  const snap = await getDoc(doc(db, "productContent", id));
+  if (!snap.exists()) return;
+  if ((snap.data() as any).organizationId !== ctx.profile.organizationId) throw new Error("Contenido de otra organización.");
+  await deleteDoc(doc(db, "productContent", id));
+}
+
+/** Aprobar/rechazar: SOLO distribuidor/reviewer. Al aprobar, active=true. */
+export async function setProductContentStatus(ctx: Ctx, id: string, status: "approved" | "rejected") {
+  if (!isOrgManager(ctx)) throw new Error("Solo un distribuidor puede aprobar o rechazar contenido.");
+  const ref = doc(db, "productContent", id);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("El contenido no existe.");
+  if ((snap.data() as any).organizationId !== ctx.profile.organizationId) throw new Error("Contenido de otra organización.");
+  await updateDoc(ref, {
+    status,
+    active: status === "approved",
+    approvedBy: status === "approved" ? ctx.uid : null,
+    approvedAt: status === "approved" ? serverTimestamp() : null,
+    updatedBy: ctx.uid,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 /**

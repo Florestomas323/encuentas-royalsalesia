@@ -62,11 +62,13 @@ export function loyaltyPrompt(input: {
   productCategory: string;
   allowedContentTypes: string[];
   plan: { dia: number; contentType: string }[];
+  officialContent?: { type: string; title: string; content?: string }[];
   currency?: string;
   locale?: string;
 }) {
   const currency = input.currency || "COP";
   const locale = input.locale || "es-CO";
+  const oficial = Array.isArray(input.officialContent) ? input.officialContent : [];
 
   // Descripción del tipo de contenido esperado por etapa.
   const guiaTipos: Record<string, string> = {
@@ -91,7 +93,12 @@ export function loyaltyPrompt(input: {
     ? "Este producto SÍ es culinario: en la etapa 'recipe' puedes incluir una receta/preparación acorde."
     : "PROHIBIDO generar recetas, preparaciones, instrucciones culinarias o sugerencias de comida: este producto NO sirve para cocinar. Ninguna etapa debe mencionar platos, ingredientes ni cocción. Si una etapa fuera de tipo receta, redacta en su lugar un consejo de uso o cuidado del propio producto.";
 
-  return `Genera el contenido de un plan de fidelización para un cliente que acaba de comprar un producto. NO generes fechas — el sistema ya las calcula. Responde ÚNICAMENTE con JSON válido, sin backticks, en español.
+  // Contenido OFICIAL aprobado (Fase C): única fuente de datos técnicos.
+  const bloqueOficial = oficial.length
+    ? `\n\nCONTENIDO OFICIAL APROBADO (única fuente permitida para datos técnicos, recetas, tiempos, cuidados o cifras). Basa el texto SOLO en esto:\n${oficial.map((c, i) => `[${i + 1}] (${c.type}) ${c.title}: ${c.content || ""}`).join("\n")}`
+    : `\n\nNO hay contenido oficial aprobado para este producto. NO inventes datos técnicos, recetas, tiempos de cocción, cifras ni instrucciones específicas: limita cada etapa a mensajes generales de acompañamiento (bienvenida, satisfacción, referidos) sin afirmaciones técnicas concretas.`;
+
+  return `Genera el contenido de un plan de fidelización para un cliente que acaba de comprar un producto. NO generes fechas — el sistema ya las calcula. Responde ÚNICAMENTE con JSON válido, sin backticks, en español.${bloqueOficial}
 
 Perfil: ${JSON.stringify(input.profile)}
 Producto comprado: ${input.product || "producto"}
