@@ -6,7 +6,7 @@ import {
   ArrowLeft, Clock, AlertCircle, Sparkles, Search, CheckCircle2, XCircle, HelpCircle,
   Eye, ListChecks, PlayCircle, CloudUpload, Cloud, Menu, User, Building2, Settings,
   LogOut, TrendingUp, FlaskConical, CalendarClock, ClipboardList, Trash2, Package, Boxes,
-  Wrench, BookOpen, Bot, Send,
+  Wrench, BookOpen,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { auth } from "@/lib/firebase/client";
@@ -37,7 +37,6 @@ import ProductPicker from "@/components/catalog/ProductPicker";
 import ConfirmSheet from "@/components/ui/ConfirmSheet";
 import ServiceSheet from "@/components/services/ServiceSheet";
 import ContentLibrary from "@/components/content/ContentLibrary";
-import ProductAssistant from "@/components/content/ProductAssistant";
 import Customer360 from "@/components/customer/Customer360";
 import AttentionPanel from "@/components/dashboard/AttentionPanel";
 import CopilotWidget from "@/components/copilot/CopilotWidget";
@@ -356,18 +355,6 @@ export default function RoyalSalesAIDemo() {
   async function eliminarContenidoHandler(id) {
     await deleteProductContent(ctx, id);
     mostrarToast("Contenido eliminado.");
-  }
-
-  // ---------- Fase C: asistente de producto ----------
-  // Responde SOLO con contenido aprobado; si no hay, la IA lo dice sin inventar.
-  async function preguntarAsistenteHandler(producto, question) {
-    const aprobado = await getApprovedProductContent(ctx, producto.id);
-    return llamarIA(auth, {
-      type: "productAssistant",
-      productName: producto.name,
-      question,
-      officialContent: aprobado.map((c) => ({ type: c.type, title: c.title, content: c.content })),
-    });
   }
 
   // ---------- visita en progreso + métricas ----------
@@ -821,13 +808,6 @@ export default function RoyalSalesAIDemo() {
               <h1 className="text-[26px] font-display font-bold text-white tracking-tight">{profile?.firstName || "Bienvenido"}</h1>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setScreen("asistente")}
-                aria-label="Asistente de producto"
-                className="w-11 h-11 rounded-full bg-white/10 grid place-items-center active:bg-white/20 transition"
-              >
-                <Bot className="w-5 h-5 text-white" strokeWidth={1.9} />
-              </button>
               <button
                 onClick={() => setPerfilAbierto(true)}
                 aria-label="Perfil y ajustes"
@@ -1620,21 +1600,6 @@ export default function RoyalSalesAIDemo() {
           onRechazar={rechazarContenidoHandler}
           onEditar={editarContenidoHandler}
           onEliminar={eliminarContenidoHandler}
-          onToast={mostrarToast}
-        />
-      </ScreenWrap>
-    );
-  }
-
-  // ---------- ASISTENTE DE PRODUCTO (Fase C · todos) ----------
-  if (screen === "asistente") {
-    return (
-      <ScreenWrap>
-        {Toast}
-        <TopBar title="Asistente de producto" subtitle="Respuestas basadas en contenido oficial" onBack={() => setScreen("dashboard")} />
-        <ProductAssistant
-          productos={productos}
-          onPreguntar={preguntarAsistenteHandler}
           onToast={mostrarToast}
         />
       </ScreenWrap>
