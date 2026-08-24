@@ -3,7 +3,7 @@
 import { db } from "@/lib/firebase/client";
 import {
   addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot,
-  orderBy, query, serverTimestamp, updateDoc, where,
+  query, serverTimestamp, updateDoc, where,
 } from "firebase/firestore";
 import type { UserProfile } from "@/types/user";
 
@@ -49,10 +49,16 @@ export async function updateCustomer(ctx: Ctx, id: string, data: Record<string, 
 }
 
 export function subscribeCustomers(ctx: Ctx, cb: (rows: any[]) => void, onError?: () => void) {
+  // Solo filtros de igualdad: Firestore no requiere índice compuesto. El orden
+  // por fecha se hace en memoria para no depender de índices desplegados a mano.
   const clauses: any[] = [where("organizationId", "==", ctx.profile.organizationId)];
   if (!isOrgManager(ctx)) clauses.push(where("assignedSalespersonId", "==", ctx.uid));
-  const q = query(collection(db, "customers"), ...clauses, orderBy("createdAt", "desc"));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+  const q = query(collection(db, "customers"), ...clauses);
+  return onSnapshot(
+    q,
+    (snap) => cb(sortByDateDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt")),
+    onError
+  );
 }
 
 export async function getCustomer(id: string) {
@@ -98,10 +104,13 @@ export async function getVisitsForCustomer(ctx: Ctx, customerId: string) {
 }
 
 export async function getRecentVisits(ctx: Ctx, max = 50) {
+  // Sin orderBy en Firestore (evita índice compuesto); ordenamos y recortamos
+  // en memoria.
   const clauses: any[] = [where("organizationId", "==", ctx.profile.organizationId)];
   if (!isOrgManager(ctx)) clauses.push(where("salespersonId", "==", ctx.uid));
-  const snap = await getDocs(query(collection(db, "visits"), ...clauses, orderBy("createdAt", "desc"), limit(max)));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const snap = await getDocs(query(collection(db, "visits"), ...clauses));
+  const rows = sortByDateDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt");
+  return rows.slice(0, max);
 }
 
 // ---------- ENCUESTA / PERFIL IA / RESULTADOS ----------
@@ -146,13 +155,18 @@ export async function createFollowup(ctx: Ctx, data: Record<string, unknown>) {
 }
 
 export function subscribeFollowups(ctx: Ctx, cb: (rows: any[]) => void, onError?: () => void) {
+  // Solo igualdades: sin índice compuesto. El orden por fecha va en memoria.
   const clauses: any[] = [
     where("organizationId", "==", ctx.profile.organizationId),
     where("status", "==", "pending"),
   ];
   if (!isOrgManager(ctx)) clauses.push(where("salespersonId", "==", ctx.uid));
-  const q = query(collection(db, "followups"), ...clauses, orderBy("scheduledAt", "asc"));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+  const q = query(collection(db, "followups"), ...clauses);
+  return onSnapshot(
+    q,
+    (snap) => cb(sortByDateAsc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "scheduledAt")),
+    onError
+  );
 }
 
 export async function completeFollowup(ctx: Ctx, id: string) {
@@ -192,4 +206,23 @@ export function tsToDate(t: any): Date | null {
   if (typeof t.toDate === "function") return t.toDate();
   if (t instanceof Date) return t;
   return null;
+}
+
+// Ordenan en memoria por un campo de fecha. Un documento recién creado con
+// serverTimestamp() tiene ese campo momentáneamente en null; lo tratamos como
+// "lo más reciente" (desc) o "lo más lejano" (asc) para que aparezca de una vez.
+function sortByDateDesc<T extends Record<string, any>>(rows: T[], field: string): T[] {
+  return [...rows].sort((a, b) => {
+    const da = tsToDate(a[field])?.getTime() ?? Infinity;
+    const dbb = tsToDate(b[field])?.getTime() ?? Infinity;
+    return dbb - da;
+  });
+}
+
+function sortByDateAsc<T extends Record<string, any>>(rows: T[], field: string): T[] {
+  return [...rows].sort((a, b) => {
+    const da = tsToDate(a[field])?.getTime() ?? Infinity;
+    const dbb = tsToDate(b[field])?.getTime() ?? Infinity;
+    return da - dbb;
+  });
 }
