@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Home, Users, Calendar, Plus, ChevronRight, Loader2, MessageCircle, Copy, Check,
   ArrowLeft, Clock, AlertCircle, Sparkles, Search, CheckCircle2, XCircle, HelpCircle,
@@ -17,7 +17,7 @@ import {
   saveSurveyResponses, saveAiProfile, saveVisitResult, savePurchaseWithItems,
   createFollowup, subscribeFollowups, completeFollowup, getFollowupsForCustomer,
   logInteraction, getInteractionsForCustomer, getRecentVisits, tsToDate,
-  softDeleteCustomer, getPurchaseItemsForCustomer,
+  softDeleteCustomer, getPurchaseItemsForCustomer, repairFollowupsForDeletedCustomers,
 } from "@/lib/db/services";
 import { subscribeProducts } from "@/lib/db/catalog";
 import { seedCatalogIfEmpty } from "@/lib/db/seed";
@@ -212,9 +212,27 @@ export default function RoyalSalesAIDemo() {
     const un3 = subscribeProducts(ctx, setProductos, () => setProductos([]));
     // Sembrar catálogo de ejemplo una sola vez (idempotente) por organización.
     seedCatalogIfEmpty(ctx).catch((e) => console.log("[v0] seed catálogo:", e?.message));
+    // Reparación idempotente: cancela seguimientos huérfanos de clientes ya
+    // eliminados (datos previos al fix). No borra nada.
+    repairFollowupsForDeletedCustomers(ctx).catch((e) => console.log("[v0] repair followups:", e?.message));
     return () => { un1(); un2(); un3(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.organizationId]);
+
+  // Seguimientos visibles = pendientes cuyo cliente existe, es de la misma
+  // organización y NO está eliminado. Protege contra seguimientos huérfanos y
+  // es la única fuente de verdad para dashboard, KPIs y listados.
+  const followupsVisibles = useMemo(() => {
+    if (!Array.isArray(followups)) return followups; // null mientras carga
+    const activos = new Set((clientes || []).map((c) => c.id));
+    return followups.filter((f) => {
+      if (f.isActive === false) return false;
+      if (f.cancelledReason === "customer_deleted") return false;
+      // Si aún no cargó la lista de clientes, no ocultamos por precaución.
+      if (!Array.isArray(clientes)) return true;
+      return activos.has(f.customerId);
+    });
+  }, [followups, clientes]);
 
   // ---------- visita en progreso + métricas ----------
   const cargarDashboard = useCallback(async () => {
@@ -540,7 +558,7 @@ export default function RoyalSalesAIDemo() {
 
   // ---------- DASHBOARD ----------
   if (screen === "dashboard") {
-    const seguimientosHoy = (followups || []).filter((f) => {
+    const seguimientosHoy = (followupsVisibles || []).filter((f) => {
       const d = tsToDate(f.scheduledAt);
       return d && d <= new Date(new Date().setHours(23, 59, 59, 999));
     });
@@ -584,7 +602,7 @@ export default function RoyalSalesAIDemo() {
                 <button onClick={() => setScreen("seguimientos")} className="text-[13px] font-semibold text-brand-dark">Ver todos</button>
               )}
             </div>
-            {followups === null ? (
+            {followupsVisibles == null ? (
               <SkeletonLista />
             ) : seguimientosHoy.length === 0 ? (
               <EmptyState
@@ -1223,13 +1241,13 @@ export default function RoyalSalesAIDemo() {
     return (
       <Shell active="seguimientos" setScreen={setScreen} onNueva={() => { limpiarFlujo(); setScreen("nuevaVisita"); }}>
         {Toast}
-        <TopBar title="Seguimientos" subtitle={followups && followups.length > 0 ? `${followups.length} pendientes` : undefined} />
+        <TopBar title="Seguimientos" subtitle={Array.isArray(followupsVisibles) && followupsVisibles.length > 0 ? `${followupsVisibles.length} pendientes` : undefined} />
         <div className="px-5 space-y-2.5 pb-28">
-          {followups === null ? (
+          {followupsVisibles == null ? (
             <SkeletonLista />
-          ) : followups.length === 0 ? (
+          ) : followupsVisibles.length === 0 ? (
             <EmptyState icon={CheckCircle2} titulo="Todo al día" texto="No tienes seguimientos pendientes. Cuando programes uno, aparecerá aquí." />
-          ) : followups.map((s) => {
+          ) : followupsVisibles.map((s) => {
             const c = clientePorId(s.customerId);
             const fecha = tsToDate(s.scheduledAt);
             const vencido = fecha && fecha < ahora && fecha.toDateString() !== ahora.toDateString();

@@ -88,6 +88,62 @@ export async function softDeleteCustomer(ctx: Ctx, customerId: string) {
     deletedBy: ctx.uid,
     updatedAt: serverTimestamp(),
   });
+  // Cancelar (sin borrar) todos sus seguimientos activos para que dejen de
+  // contar y de mostrarse de inmediato en dashboard, KPIs y listados.
+  await cancelActiveFollowupsForCustomer(ctx, customerId, "customer_deleted");
+}
+
+/**
+ * Cancela los seguimientos activos de un cliente sin borrarlos.
+ * "Activo" = status distinto de "completed"/"cancelled". Idempotente: si ya
+ * están cancelados/completados, no toca nada. Nunca elimina documentos.
+ * Devuelve cuántos seguimientos cambió.
+ */
+export async function cancelActiveFollowupsForCustomer(
+  ctx: Ctx,
+  customerId: string,
+  reason = "customer_deleted",
+): Promise<number> {
+  const snap = await getDocs(query(
+    collection(db, "followups"),
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("customerId", "==", customerId),
+  ));
+  const activos = snap.docs.filter((d) => {
+    const f = d.data() as any;
+    return f.status !== "completed" && f.status !== "cancelled";
+  });
+  if (!activos.length) return 0;
+  const batch = writeBatch(db);
+  for (const d of activos) {
+    batch.update(d.ref, {
+      status: "cancelled",
+      isActive: false,
+      cancelledReason: reason,
+      cancelledAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+  return activos.length;
+}
+
+/**
+ * Migración/reparación idempotente para datos existentes: busca clientes con
+ * isDeleted == true y cancela sus seguimientos activos huérfanos. Segura de
+ * ejecutar múltiples veces (solo toca seguimientos que aún estén activos).
+ */
+export async function repairFollowupsForDeletedCustomers(ctx: Ctx): Promise<number> {
+  const clientesSnap = await getDocs(query(
+    collection(db, "customers"),
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("isDeleted", "==", true),
+  ));
+  let total = 0;
+  for (const c of clientesSnap.docs) {
+    total += await cancelActiveFollowupsForCustomer(ctx, c.id, "customer_deleted");
+  }
+  return total;
 }
 
 // Preparado para una futura papelera / restaurar (aún no expuesto en UI).
