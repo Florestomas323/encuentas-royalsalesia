@@ -1,5 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// GET /api/admin/seed-users?secret=XXXX — diagnóstico.
+// Revisa la configuración del servidor SIN escribir nada en Firestore.
+// Útil para saber exactamente qué variable falta o está mal formada.
+// Protegido con el mismo secreto; nunca devuelve el contenido de las credenciales.
+export async function GET(req: NextRequest) {
+  const secret = (req.nextUrl.searchParams.get("secret") || "").trim();
+  const expectedSecret = process.env.SEED_ADMIN_SECRET?.trim();
+
+  if (!expectedSecret) {
+    return NextResponse.json({ ok: false, error: "SEED_ADMIN_SECRET no está configurado en Vercel." }, { status: 500 });
+  }
+  if (secret !== expectedSecret) {
+    return NextResponse.json({ ok: false, error: "El secreto no coincide." }, { status: 401 });
+  }
+
+  const diagnostico: Record<string, unknown> = {};
+
+  // 1. ¿Está la variable y con qué forma?
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  diagnostico.variableExiste = !!raw;
+  diagnostico.longitud = raw?.length ?? 0;
+  diagnostico.empiezaCon = raw ? raw.trim().slice(0, 1) : null;
+
+  // 2. ¿Se puede interpretar?
+  try {
+    const { parseServiceAccount } = await import("@/lib/firebase/admin");
+    const parsed = parseServiceAccount(raw);
+    diagnostico.credencialesValidas = parsed.ok;
+    if (parsed.ok) {
+      diagnostico.projectId = parsed.account.project_id;
+      diagnostico.clientEmail = parsed.account.client_email;
+      diagnostico.privateKeyLongitud = parsed.account.private_key.length;
+    } else {
+      diagnostico.motivo = parsed.reason;
+    }
+  } catch (err: any) {
+    diagnostico.credencialesValidas = false;
+    diagnostico.motivo = err?.message;
+  }
+
+  // 3. ¿Firebase Admin conecta de verdad?
+  if (diagnostico.credencialesValidas) {
+    try {
+      const { adminAuth } = await import("@/lib/firebase/admin");
+      await adminAuth().listUsers(1);
+      diagnostico.conexionFirebase = "OK";
+    } catch (err: any) {
+      diagnostico.conexionFirebase = "FALLÓ";
+      diagnostico.motivoConexion = err?.message;
+    }
+  }
+
+  return NextResponse.json({ ok: true, diagnostico });
+}
+
+
 // Endpoint de configuración inicial. Crea (o actualiza) los perfiles de los dos
 // usuarios conocidos del sistema. Es idempotente: se puede ejecutar varias veces
 // sin duplicar organizaciones ni usuarios.
@@ -47,8 +103,11 @@ export async function POST(req: NextRequest) {
     FieldValue = firestore.FieldValue;
   } catch (err: any) {
     console.error("[seed-users] Firebase Admin init:", err?.message);
+    // Mostramos la razón concreta en pantalla. Es seguro: parseServiceAccount
+    // nunca incluye el contenido de las credenciales en sus mensajes, solo
+    // describe qué falta o qué formato tiene el valor.
     return fail(
-      "Firebase Admin no pudo inicializarse. Revisa FIREBASE_SERVICE_ACCOUNT_JSON en Vercel — debe contener el JSON completo del service account.",
+      `Firebase Admin no pudo inicializarse. ${err?.message || "Revisa FIREBASE_SERVICE_ACCOUNT_JSON en Vercel."}`,
       500
     );
   }
