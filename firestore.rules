@@ -143,6 +143,35 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resourceInMyOrg();
     }
 
+    // Fase E — Royal Copilot.
+    // Conocimiento OFICIAL de garantías: colección GLOBAL (no por organización),
+    // de solo lectura para cualquier usuario autenticado. La escribe únicamente
+    // el servidor (endpoint admin con Admin SDK, que no pasa por estas reglas).
+    match /warrantyKnowledge/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Conversaciones del Copilot. Las escribe SOLO el servidor (Admin SDK); el
+    // cliente únicamente puede LEER las suyas (uid propio). Los mensajes viven
+    // en una subcolección y también guardan uid para poder filtrarlos aquí.
+    match /copilotConversations/{convId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+
+      match /messages/{msgId} {
+        allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+        allow write: if false;
+      }
+    }
+
+    // Uso agregado del Copilot (tokens/intención) para monitoreo de costos.
+    // Solo lectura del propio usuario; lo escribe el servidor.
+    match /copilotUsage/{id} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
