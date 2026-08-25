@@ -68,6 +68,37 @@ export function subscribeCustomers(ctx: Ctx, cb: (rows: any[]) => void, onError?
   );
 }
 
+/**
+ * Cancela los servicios postventa que sigan pendientes de un cliente. Se usa
+ * al eliminarlo: sin esto los servicios quedaban vivos en la base, seguían
+ * contando en el badge y reaparecían en cualquier vista sin filtro.
+ */
+export async function cancelPendingServicesForCustomer(
+  ctx: Ctx,
+  customerId: string,
+  reason = "customer_deleted",
+): Promise<number> {
+  const snap = await getDocs(query(
+    collection(db, "postSaleServices"),
+    where("organizationId", "==", ctx.profile.organizationId),
+    where("customerId", "==", customerId),
+  ));
+  const pendientes = snap.docs.filter((d) => (d.data() as any).status === "pending");
+  if (!pendientes.length) return 0;
+  const batch = writeBatch(db);
+  for (const d of pendientes) {
+    batch.update(d.ref, {
+      status: "cancelled",
+      cancelledReason: reason,
+      cancelledAt: serverTimestamp(),
+      updatedBy: ctx.uid,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+  return pendientes.length;
+}
+
 // ---------- SOFT DELETE de clientes ----------
 // Nunca borra el documento ni su historial (visitas, compras, encuestas).
 // Solo marca flags. Valida organización y rol antes de tocar nada.
@@ -88,9 +119,10 @@ export async function softDeleteCustomer(ctx: Ctx, customerId: string) {
     deletedBy: ctx.uid,
     updatedAt: serverTimestamp(),
   });
-  // Cancelar (sin borrar) todos sus seguimientos activos para que dejen de
-  // contar y de mostrarse de inmediato en dashboard, KPIs y listados.
+  // Cancelar (sin borrar) todo lo que seguiría apareciendo en la app:
+  // seguimientos activos Y servicios postventa pendientes.
   await cancelActiveFollowupsForCustomer(ctx, customerId, "customer_deleted");
+  await cancelPendingServicesForCustomer(ctx, customerId, "customer_deleted");
 }
 
 /**
@@ -142,6 +174,7 @@ export async function repairFollowupsForDeletedCustomers(ctx: Ctx): Promise<numb
   let total = 0;
   for (const c of clientesSnap.docs) {
     total += await cancelActiveFollowupsForCustomer(ctx, c.id, "customer_deleted");
+    total += await cancelPendingServicesForCustomer(ctx, c.id, "customer_deleted");
   }
   return total;
 }
