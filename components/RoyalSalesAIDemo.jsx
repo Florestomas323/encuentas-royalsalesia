@@ -574,11 +574,10 @@ export default function RoyalSalesAIDemo() {
           products: nombresProductos,
           notes: "",
           hasPendingService: requiereServicio,
-          // Con servicio pendiente, el plan queda EN ESPERA: se activa al
-          // completar el último servicio (recordatorios desde esa fecha).
-          pendingLoyalty: requiereServicio
-            ? { active: true, plan: planData, contenido, supportsRecipes: admiteRecetas }
-            : null,
+          // El plan de fidelización YA NO se difiere: los seguimientos se crean
+          // siempre al vender, en paralelo al servicio pendiente. Se guarda el
+          // plan solo como referencia (inactivo), nunca para activarlo después.
+          pendingLoyalty: { active: false, plan: planData, contenido, supportsRecipes: admiteRecetas },
         },
         itemsCompra,
       );
@@ -587,11 +586,11 @@ export default function RoyalSalesAIDemo() {
       await updateCustomer(ctx, customerId, { status: "purchased" });
 
       const plan = [];
+
+      // Servicio postventa (si aplica): queda PENDIENTE hasta marcarlo realizado.
+      // El nombre y el teléfono salen del formulario en memoria (prospecto)
+      // porque la lista suscrita puede no haberse actualizado todavía.
       if (requiereServicio) {
-        // Crear los servicios postventa; los seguimientos NO se agendan aún.
-        // El nombre sale del formulario en memoria (prospecto): la lista de
-        // clientes suscrita puede no haberse actualizado aún si el cliente se
-        // creó hace un instante (condición de carrera que dejaba "Cliente").
         const cliActual = (clientes || []).find((c) => c.id === customerId);
         const nombreCli = (cliActual
           ? `${cliActual.firstName || ""} ${cliActual.lastName || ""}`
@@ -609,25 +608,29 @@ export default function RoyalSalesAIDemo() {
         await createPostSaleServices(ctx, {
           purchaseId, customerId, visitId, customerName: nombreCli, customerPhone: telefonoCli, items: itemsConMensaje,
         });
-        for (const { dia, titulo } of planPasos) {
-          plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "", pendiente: true });
-        }
-      } else {
-        for (const { dia, titulo, contentType } of planPasos) {
-          const scheduledAt = new Date(Date.now() + dia * 86400000);
-          await createFollowup(ctx, {
-            customerId, visitId, type: "loyalty",
-            contentType, supportsRecipes: admiteRecetas,
-            scheduledAt, objective: titulo,
-            suggestedMessage: contenido[`dia${dia}`] || "",
-          });
-          plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "" });
-        }
       }
+
+      // Seguimientos de fidelización: SIEMPRE se agendan al vender, haya o no
+      // servicio pendiente. Antes quedaban congelados hasta completar el
+      // servicio y la pestaña Seguimientos aparecía vacía tras una venta.
+      for (const { dia, titulo, contentType } of planPasos) {
+        const scheduledAt = new Date(Date.now() + dia * 86400000);
+        await createFollowup(ctx, {
+          customerId, visitId, type: "loyalty",
+          contentType, supportsRecipes: admiteRecetas,
+          scheduledAt, objective: titulo,
+          suggestedMessage: contenido[`dia${dia}`] || "",
+        });
+        plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "" });
+      }
+
       setPlanFidelizacion(plan);
       setItemsCompra([]);
       try { localStorage.removeItem(`rsai-draft-${visitId}`); } catch {}
-      mostrarToast(plan.some((p) => p.pendiente) ? "Compra guardada. Programa el servicio postventa." : "Compra y plan guardados");
+      setResultadoTipo(requiereServicio ? "purchased_service" : "purchased");
+      mostrarToast(requiereServicio
+        ? "Compra guardada. Coordina el servicio postventa."
+        : "Compra y plan de seguimiento guardados");
       setScreen("planFidelizacion");
     } catch {
       mostrarToast("No pudimos guardar. Intenta de nuevo.");
@@ -885,7 +888,7 @@ export default function RoyalSalesAIDemo() {
           ) : (
             <AttentionPanel
               followups={followupsVisibles}
-              servicios={servicios}
+              servicios={serviciosPendientes}
               clientePorId={clientePorId}
               onAbrirCliente={(id) => { const c = clientePorId(id); if (c) abrirFicha(c); else setScreen("seguimientos"); }}
               onVerSeguimientos={() => setScreen("seguimientos")}
@@ -1265,17 +1268,17 @@ export default function RoyalSalesAIDemo() {
         {Toast}
         <TopBar title="Plan de fidelización" />
         <div className="px-5 flex-1 space-y-3">
-          {(planFidelizacion || []).some((p) => p.pendiente) && (
+          {resultadoTipo === "purchased_service" && (
             <div className="flex items-start gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
               <Package className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2} />
               <p className="text-[13px] text-amber-800 leading-snug">
-                Este producto requiere un servicio postventa (curado, prueba o instalación). El plan queda en espera y sus recordatorios comenzarán a contar cuando completes el servicio en la pestaña <span className="font-semibold">Servicios</span>.
+                Este producto requiere un servicio postventa (curado, prueba o instalación). Ya está pendiente en la pestaña <span className="font-semibold">Servicios</span>; márcalo como realizado cuando lo hagas.
               </p>
             </div>
           )}
           {(planFidelizacion || []).map((p) => (
             <div key={p.dia} className="flex gap-3 bg-white border border-gray-100 rounded-xl p-4">
-              <div className={`w-12 h-12 rounded-full text-white flex flex-col items-center justify-center text-xs font-bold shrink-0 ${p.pendiente ? "bg-gray-400" : "bg-green-800"}`}>
+              <div className="w-12 h-12 rounded-full text-white flex flex-col items-center justify-center text-xs font-bold shrink-0 bg-green-800">
                 <span>{p.dia}</span>
                 <span className="text-[8px] font-normal">día{p.dia > 1 ? "s" : ""}</span>
               </div>
@@ -1286,9 +1289,7 @@ export default function RoyalSalesAIDemo() {
             </div>
           ))}
           <p className="text-xs text-gray-400">
-            {(planFidelizacion || []).some((p) => p.pendiente)
-              ? "Los seguimientos se agendarán automáticamente al completar el servicio postventa."
-              : "Cada punto ya quedó guardado como seguimiento real con su fecha — los verás en la pestaña Seguimientos."}
+            Cada punto ya quedó guardado como seguimiento con su fecha — los verás en la pestaña Seguimientos.
           </p>
         </div>
         <div className="px-5 py-6">
@@ -1396,7 +1397,7 @@ export default function RoyalSalesAIDemo() {
       <Shell active="clientes" setScreen={setScreen} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
         {Toast}
         {Copilot}
-        <TopBar title="Clientes" subtitle={clientes ? `${clientes.length} en total` : undefined} />
+        <TopBar title="Clientes" subtitle={clientes ? `${clientes.filter((c) => !c.isDeleted).length} en total` : undefined} />
 
         {clientes && clientes.length > 0 && (
           <div className="px-5 pb-3 space-y-3">
@@ -1438,7 +1439,7 @@ export default function RoyalSalesAIDemo() {
           )}
           {clientes === null ? (
             <SkeletonLista />
-          ) : clientes.length === 0 ? (
+          ) : clientes.filter((c) => !c.isDeleted).length === 0 ? (
             <EmptyState
               icon={Users}
               titulo="Aún no tienes clientes"
