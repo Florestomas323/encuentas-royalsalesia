@@ -17,6 +17,20 @@ function enumOr(v: unknown, allowed: string[], fallback = "unknown"): string {
   return typeof v === "string" && allowed.includes(v) ? v : fallback;
 }
 
+/** Normaliza una lista de objetos {clave: texto} con tope de elementos. */
+function objArray(v: unknown, claves: string[], max: number): Record<string, string>[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((x) => x && typeof x === "object")
+    .map((x: any) => {
+      const o: Record<string, string> = {};
+      for (const k of claves) o[k] = str(x?.[k]);
+      return o;
+    })
+    .filter((o) => claves.every((k) => o[k]))
+    .slice(0, max);
+}
+
 export type CustomerProfile = {
   primaryMotivator: string;
   secondaryMotivator: string;
@@ -27,6 +41,9 @@ export type CustomerProfile = {
   avoidTopics: string[];
   likelyConcerns: string[];
   recommendedContent: string[];
+  sellingAngle: string;
+  objectionResponses: Record<string, string>[];
+  recommendedProducts: Record<string, string>[];
   interestLevel: string;
   priceSensitivity: string;
 };
@@ -42,6 +59,9 @@ export function validateCustomerProfile(raw: any): CustomerProfile {
     avoidTopics: strArray(raw?.avoidTopics, 3),
     likelyConcerns: strArray(raw?.likelyConcerns, 2),
     recommendedContent: strArray(raw?.recommendedContent, 5),
+    sellingAngle: str(raw?.sellingAngle),
+    objectionResponses: objArray(raw?.objectionResponses, ["objection", "response"], 2),
+    recommendedProducts: objArray(raw?.recommendedProducts, ["name", "reason"], 3),
     interestLevel: enumOr(raw?.interestLevel, ["alto", "medio", "bajo"]),
     priceSensitivity: enumOr(raw?.priceSensitivity, ["alta", "media", "baja"]),
   };
