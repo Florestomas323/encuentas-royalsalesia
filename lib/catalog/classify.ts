@@ -234,6 +234,32 @@ const FALLBACK_CHECKLISTS: Record<ServiceType, string[]> = {
   ],
 };
 
+// Mensaje PREDETERMINADO para coordinar el servicio con el cliente por
+// WhatsApp, según el tipo de servicio del producto comprado. No usa IA:
+// plantillas fijas, cálidas y accionables, listas para enviar al vender.
+export function serviceCoordinationMessage(args: {
+  customerName?: string;
+  productName?: string;
+  serviceType?: string | null;
+  sellerName?: string;
+}): string {
+  const nombre = (args.customerName || "").trim();
+  const saludo = nombre ? `Hola ${nombre} 👋` : "Hola 👋";
+  const firma = args.sellerName ? ` Soy ${args.sellerName}, su asesor de Royal Prestige.` : "";
+  const producto = args.productName || "su producto Royal Prestige";
+
+  switch (args.serviceType) {
+    case "curing_preparation":
+      return `${saludo}${firma} ¡Felicidades por su ${producto}! 🎉 Para estrenarlo como se debe, el siguiente paso es el curado y la preparación inicial — es un servicio sin costo que hago yo mismo en su casa. Mientras tanto, le recomiendo mantenerlo empacado. ¿Qué día y hora de esta semana le queda bien para agendarlo?`;
+    case "testing_training":
+      return `${saludo}${firma} ¡Felicidades por su ${producto}! 🎉 El siguiente paso es la prueba de funcionamiento y una capacitación rápida para que le saque todo el provecho desde el primer día — sin costo. Le recomiendo mantenerlo empacado hasta esa visita. ¿Qué día y hora le queda bien esta semana?`;
+    case "installation":
+      return `${saludo}${firma} ¡Felicidades por su ${producto}! 🎉 El siguiente paso es coordinar la instalación para dejarlo funcionando y explicarle su mantenimiento — sin costo. ¿Qué día y hora de esta semana le queda bien para agendarla?`;
+    default:
+      return `${saludo}${firma} ¡Felicidades por su ${producto}! 🎉 Quiero coordinar con usted el servicio de entrega y puesta en marcha para que quede funcionando perfecto. ¿Qué día y hora de esta semana le queda bien?`;
+  }
+}
+
 /**
  * Devuelve el checklist a usar para un servicio: el del producto si existe, o
  * el de respaldo según el tipo. Siempre devuelve al menos un paso.
