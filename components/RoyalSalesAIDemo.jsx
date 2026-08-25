@@ -23,10 +23,10 @@ import {
   createPostSaleServices, subscribePostSaleServices, completePostSaleService, assignPostSaleServiceToMe,
 } from "@/lib/db/services";
 import {
-  subscribeProducts, subscribeProductContent, getApprovedProductContent,
+  subscribeProductContent, getApprovedProductContent,
   createProductContent, updateProductContent, deleteProductContent, setProductContentStatus,
 } from "@/lib/db/catalog";
-import { seedCatalogIfEmpty, upgradeCatalogCapabilities } from "@/lib/db/seed";
+import { CATALOGO_ESTATICO } from "@/lib/catalog/static";
 import {
   classifyFamily, capabilitiesFor, buildLoyaltyPlan, allowedContentTypes,
   serviceTypeLabel, serviceChecklistFor, tituloDe,
@@ -186,7 +186,8 @@ export default function RoyalSalesAIDemo() {
   const [waLogFollowup, setWaLogFollowup] = useState(null);
 
   // Fase A: catálogo, items de compra, eliminación y compras de la ficha.
-  const [productos, setProductos] = useState([]);
+  // Catálogo estático del repo: disponible al instante, sin conexión y sin seed.
+  const productos = CATALOGO_ESTATICO;
   const [itemsCompra, setItemsCompra] = useState([]);
   const [confirmarEliminar, setConfirmarEliminar] = useState(null); // cliente a eliminar
   const [eliminando, setEliminando] = useState(false);
@@ -229,22 +230,17 @@ export default function RoyalSalesAIDemo() {
     if (!user || !profile?.organizationId) return;
     const un1 = subscribeCustomers(ctx, setClientes, () => setClientes([]));
     const un2 = subscribeFollowups(ctx, setFollowups, () => setFollowups([]));
-    const un3 = subscribeProducts(ctx, setProductos, () => setProductos([]));
+
     const un4 = subscribePostSaleServices(ctx, setServicios, () => setServicios([]));
     // Biblioteca de contenido: solo el distribuidor/reviewer necesita el stream.
     const esGestor = profile?.role === "distributor" || profile?.role === "reviewer";
     const un5 = esGestor ? subscribeProductContent(ctx, setContenidoProd, () => setContenidoProd([])) : null;
-    // Sembrar catálogo real una sola vez (idempotente); al terminar, asegurar
-    // que todos los productos tengan flags de contenido (supportsRecipes, etc.).
-    seedCatalogIfEmpty(ctx)
-      .then(() => upgradeCatalogCapabilities(ctx))
-      .catch((e) => console.log("[v0] seed/upgrade catálogo:", e?.message));
     // Reparaciones idempotentes de datos previos (no borran historial):
     // 1) cancelar seguimientos de clientes eliminados;
     // 2) quitar recetas de planes de clientes sin productos culinarios.
     repairFollowupsForDeletedCustomers(ctx).catch((e) => console.log("[v0] repair followups:", e?.message));
     repairLoyaltyContentForNonCookingCustomers(ctx).catch((e) => console.log("[v0] repair recetas:", e?.message));
-    return () => { un1(); un2(); un3(); un4(); un5 && un5(); };
+    return () => { un1(); un2(); un4(); un5 && un5(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.organizationId]);
 
