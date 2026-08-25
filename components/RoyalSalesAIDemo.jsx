@@ -579,6 +579,12 @@ export default function RoyalSalesAIDemo() {
           suggestedMessage: "", // se completa abajo, cuando ya se conoce el nombre del cliente
         }));
       const requiereServicio = serviceItems.length > 0;
+      // Si el producto se escribió a mano (sin elegirlo del catálogo) no se puede
+      // saber si necesita curado, prueba o instalación. Se avisa para que el
+      // vendedor lo registre bien y no se pierda el servicio.
+      if (!itemsCompra.length && compraData.producto) {
+        mostrarToast("Producto escrito a mano: elige del catálogo para que se cree el servicio.");
+      }
       const planData = planPasos.map((p) => ({ dia: p.dia, titulo: p.titulo, contentType: p.contentType }));
 
       const purchaseId = await savePurchaseWithItems(
@@ -621,23 +627,35 @@ export default function RoyalSalesAIDemo() {
             sellerName: profile?.firstName,
           }),
         }));
-        await createPostSaleServices(ctx, {
-          purchaseId, customerId, visitId, customerName: nombreCli, customerPhone: telefonoCli, items: itemsConMensaje,
-        });
+        try {
+          await createPostSaleServices(ctx, {
+            purchaseId, customerId, visitId, customerName: nombreCli, customerPhone: telefonoCli, items: itemsConMensaje,
+          });
+        } catch (e) {
+          // Se muestra el motivo real en vez de esconderlo tras un error genérico:
+          // la compra ya quedó guardada y el vendedor debe saber qué falló.
+          console.error("[servicio postventa]", e);
+          mostrarToast(`No se creó el servicio: ${e?.message || "error desconocido"}`);
+        }
       }
 
       // Seguimientos de fidelización: SIEMPRE se agendan al vender, haya o no
       // servicio pendiente. Antes quedaban congelados hasta completar el
       // servicio y la pestaña Seguimientos aparecía vacía tras una venta.
-      for (const { dia, titulo, contentType } of planPasos) {
-        const scheduledAt = new Date(Date.now() + dia * 86400000);
-        await createFollowup(ctx, {
-          customerId, visitId, type: "loyalty",
-          contentType, supportsRecipes: admiteRecetas,
-          scheduledAt, objective: titulo,
-          suggestedMessage: contenido[`dia${dia}`] || "",
-        });
-        plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "" });
+      try {
+        for (const { dia, titulo, contentType } of planPasos) {
+          const scheduledAt = new Date(Date.now() + dia * 86400000);
+          await createFollowup(ctx, {
+            customerId, visitId, type: "loyalty",
+            contentType, supportsRecipes: admiteRecetas,
+            scheduledAt, objective: titulo,
+            suggestedMessage: contenido[`dia${dia}`] || "",
+          });
+          plan.push({ dia, titulo, accion: contenido[`dia${dia}`] || "" });
+        }
+      } catch (e) {
+        console.error("[seguimientos fidelización]", e);
+        mostrarToast(`No se crearon los seguimientos: ${e?.message || "error desconocido"}`);
       }
 
       setPlanFidelizacion(plan);
@@ -648,8 +666,9 @@ export default function RoyalSalesAIDemo() {
         ? "Compra guardada. Coordina el servicio postventa."
         : "Compra y plan de seguimiento guardados");
       setScreen("planFidelizacion");
-    } catch {
-      mostrarToast("No pudimos guardar. Intenta de nuevo.");
+    } catch (e) {
+      console.error("[registrarCompra]", e);
+      mostrarToast(`No pudimos guardar: ${e?.message || "intenta de nuevo"}`);
     } finally {
       setProcesando(false);
     }
@@ -696,8 +715,9 @@ export default function RoyalSalesAIDemo() {
       try { localStorage.removeItem(`rsai-draft-${visitId}`); } catch {}
       mostrarToast("Seguimiento programado");
       irADashboard();
-    } catch {
-      mostrarToast("No pudimos guardar. Intenta de nuevo.");
+    } catch (e) {
+      console.error("[registrarCompra]", e);
+      mostrarToast(`No pudimos guardar: ${e?.message || "intenta de nuevo"}`);
     } finally {
       setProcesando(false);
     }
