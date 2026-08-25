@@ -1,5 +1,6 @@
 "use client";
 
+import { buscarProductos } from "@/lib/catalog/search";
 import { useMemo, useState } from "react";
 import {
   Loader2, Sparkles, Check, X, Trash2, ChevronRight, ArrowLeft, BookOpen, Search, Pencil,
@@ -61,8 +62,8 @@ export default function ContentLibrary({
   }, [contenido]);
 
   const productosFiltrados = useMemo(() => {
-    const q = busqueda.trim().toLowerCase();
-    const list = q ? productos.filter((p) => p.name.toLowerCase().includes(q)) : productos;
+    const q = busqueda.trim();
+    const list = q ? buscarProductos(productos, q, productos.length) : productos;
     return [...list].sort((a, b) => a.name.localeCompare(b.name, "es"));
   }, [productos, busqueda]);
 
