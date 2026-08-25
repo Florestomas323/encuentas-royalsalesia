@@ -531,6 +531,7 @@ export default function RoyalSalesAIDemo() {
   }
 
   // ---------- resultado: compró ----------
+  const pasoActual = useRef("guardar");
   async function registrarCompra() {
     if (procesando) return;
     setProcesando(true);
@@ -611,6 +612,7 @@ export default function RoyalSalesAIDemo() {
       }
       const planData = planPasos.map((p) => ({ dia: p.dia, titulo: p.titulo, contentType: p.contentType }));
 
+      pasoActual.current = "guardar la compra";
       const purchaseId = await savePurchaseWithItems(
         ctx, visitId, customerId,
         {
@@ -627,8 +629,11 @@ export default function RoyalSalesAIDemo() {
         },
         itemsCompra,
       );
+      pasoActual.current = "registrar el resultado de la visita";
       await saveVisitResult(ctx, visitId, customerId, "purchased", {});
+      pasoActual.current = "cerrar la visita";
       await updateVisit(ctx, visitId, { status: "completed", completedAt: new Date(), outcome: "purchased" });
+      pasoActual.current = "actualizar el cliente";
       await updateCustomer(ctx, customerId, { status: "purchased" });
 
       const plan = [];
@@ -692,7 +697,10 @@ export default function RoyalSalesAIDemo() {
       setScreen("planFidelizacion");
     } catch (e) {
       console.error("[registrarCompra]", e);
-      mostrarToast(`No pudimos guardar: ${e?.message || "intenta de nuevo"}`);
+      const detalle = /insufficient permissions/i.test(e?.message || "")
+        ? "faltan permisos en Firestore. Publica las reglas actualizadas en Firebase."
+        : (e?.message || "intenta de nuevo");
+      mostrarToast(`Falló al ${pasoActual.current}: ${detalle}`);
     } finally {
       setProcesando(false);
     }
@@ -740,8 +748,11 @@ export default function RoyalSalesAIDemo() {
       mostrarToast("Seguimiento programado");
       irADashboard();
     } catch (e) {
-      console.error("[registrarCompra]", e);
-      mostrarToast(`No pudimos guardar: ${e?.message || "intenta de nuevo"}`);
+      console.error("[confirmarSeguimiento]", e);
+      const detalle = /insufficient permissions/i.test(e?.message || "")
+        ? "faltan permisos en Firestore. Publica las reglas actualizadas en Firebase."
+        : (e?.message || "intenta de nuevo");
+      mostrarToast(`No se pudo programar el seguimiento: ${detalle}`);
     } finally {
       setProcesando(false);
     }
