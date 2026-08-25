@@ -452,12 +452,14 @@ export type ServiceItemInput = {
   keepPackagedUntilService: boolean;
   checklist: string[];
   quantity?: number;
+  // Mensaje predeterminado (por tipo de servicio) para coordinar con el cliente.
+  suggestedMessage?: string;
 };
 
 /** Crea un servicio postventa por cada producto que lo requiere. Devuelve IDs. */
 export async function createPostSaleServices(
   ctx: Ctx,
-  args: { purchaseId: string; customerId: string; visitId: string; customerName?: string; items: ServiceItemInput[] },
+  args: { purchaseId: string; customerId: string; visitId: string; customerName?: string; customerPhone?: string; items: ServiceItemInput[] },
 ): Promise<string[]> {
   const valid = args.items.filter((it) => it.productId && it.serviceType);
   if (!valid.length) return [];
@@ -471,6 +473,8 @@ export async function createPostSaleServices(
       customerId: args.customerId,
       visitId: args.visitId,
       customerName: args.customerName ?? "",
+      customerPhone: args.customerPhone ?? "",
+      suggestedMessage: it.suggestedMessage ?? "",
       productId: it.productId,
       productName: it.productName,
       serviceType: it.serviceType,
