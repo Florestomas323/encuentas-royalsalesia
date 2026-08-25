@@ -254,12 +254,16 @@ export default function RoyalSalesAIDemo() {
   // número siempre cuadre con lo que se ve en Clientes, Seguimientos y Servicios.
   const metricas = useMemo(() => {
     if (!Array.isArray(visitasRecientes)) return null;
-    const eliminados = new Set(
-      (Array.isArray(clientes) && !clientesError ? clientes : []).filter((c) => c.isDeleted).map((c) => c.id),
-    );
+    // Solo cuentan las visitas cuyo cliente EXISTE y no está eliminado. Así el
+    // número siempre coincide con lo que se ve en Clientes, y no se inflan los
+    // KPIs con visitas huérfanas (cliente borrado o registro incompleto).
+    const listaOk = Array.isArray(clientes) && !clientesError;
+    const validos = listaOk
+      ? new Set(clientes.filter((c) => !c.isDeleted).map((c) => c.id))
+      : null;
     const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
     const deHoy = visitasRecientes.filter((v) => {
-      if (eliminados.has(v.customerId)) return false;
+      if (validos && !validos.has(v.customerId)) return false;
       const d = tsToDate(v.createdAt);
       return d && d >= hoy;
     });
@@ -423,16 +427,29 @@ export default function RoyalSalesAIDemo() {
   function irADashboard() { limpiarFlujo(); setScreen("dashboard"); }
 
   // ---------- nueva visita ----------
-  async function comenzarVisita(usarClienteExistenteId = null) {
+  /**
+   * Inicia una visita.
+   * @param opciones.clienteExistenteId  ID REAL de un cliente ya guardado.
+   * @param opciones.forzarNuevo         true = crear cliente aunque el teléfono
+   *                                     coincida con otro (son personas distintas).
+   *
+   * Nunca se debe pasar un valor inventado como id: si el id no corresponde a un
+   * documento real, la visita queda huérfana (aparece en los números pero el
+   * cliente no existe en ningún listado).
+   */
+  async function comenzarVisita({ clienteExistenteId = null, forzarNuevo = false } = {}) {
     const phone = normalizePhone(prospecto.phone);
     if (!prospecto.firstName || !isValidPhone(phone)) return;
     setCreandoVisita(true);
     try {
-      let cid = usarClienteExistenteId;
-      if (!cid && !duplicado) {
+      let cid = clienteExistenteId || null;
+
+      // Aviso de duplicado: solo si no venimos de una decisión explícita.
+      if (!cid && !forzarNuevo && !duplicado) {
         const existente = await findCustomerByPhone(ctx, phone);
         if (existente) { setDuplicado(existente); setCreandoVisita(false); return; }
       }
+
       if (!cid) {
         cid = await createCustomer(ctx, {
           firstName: prospecto.firstName.trim(),
@@ -442,12 +459,19 @@ export default function RoyalSalesAIDemo() {
           familySize: prospecto.familySize ? Number(prospecto.familySize) : null,
         });
       }
+
+      // Salvaguarda: sin un id de cliente válido no se crea la visita.
+      if (!cid || typeof cid !== "string") {
+        throw new Error("No se pudo identificar al cliente.");
+      }
+
       const vid = await createVisit(ctx, cid);
       setCustomerId(cid); setVisitId(vid); setDuplicado(null);
       mostrarToast("Visita guardada");
       setScreen("encuesta");
-    } catch {
-      mostrarToast("No pudimos guardar. Revisa tu conexión.");
+    } catch (e) {
+      console.error("[comenzarVisita]", e);
+      mostrarToast(`No pudimos guardar: ${e?.message || "revisa tu conexión"}`);
     } finally {
       setCreandoVisita(false);
     }
@@ -970,14 +994,14 @@ export default function RoyalSalesAIDemo() {
               <p className="text-sm font-semibold text-orange-800 mb-1">Parece que este cliente ya existe</p>
               <p className="text-xs text-orange-700 mb-3">{duplicado.firstName} {duplicado.lastName || ""} · {duplicado.phone}</p>
               <div className="flex gap-2">
-                <button onClick={() => comenzarVisita(duplicado.id)} className="flex-1 py-2 rounded-lg bg-green-800 text-white text-xs font-semibold">Usar este cliente</button>
-                <button onClick={() => comenzarVisita("nuevo") } className="flex-1 py-2 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-gray-700">Es otra persona</button>
+                <button onClick={() => comenzarVisita({ clienteExistenteId: duplicado.id })} className="flex-1 py-2 rounded-lg bg-green-800 text-white text-xs font-semibold">Usar este cliente</button>
+                <button onClick={() => comenzarVisita({ forzarNuevo: true })} className="flex-1 py-2 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-gray-700">Es otra persona</button>
               </div>
             </div>
           )}
         </div>
         <div className="px-5 pb-8">
-          <Boton onClick={() => comenzarVisita()} disabled={!prospecto.firstName || !phoneOk || creandoVisita}>
+          <Boton onClick={() => comenzarVisita({})} disabled={!prospecto.firstName || !phoneOk || creandoVisita}>
             {creandoVisita ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Comenzar encuesta <ChevronRight className="w-4 h-4" />
           </Boton>
         </div>
