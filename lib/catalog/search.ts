@@ -22,28 +22,61 @@ export function raizPalabra(t: string): string {
 
 // Español común → tokens reales del catálogo (nombres en inglés).
 export const SINONIMOS: Record<string, string[]> = {
-  licuadora: ["blender", "power"], batidora: ["blender", "mixer"],
-  olla: ["pot", "cookware", "dutch", "saucepan", "stock", "casserole", "system", "roaster"],
-  cacerola: ["saucepan", "casserole", "pot"], caldero: ["dutch", "stock", "pot"],
-  sarten: ["skillet", "pan", "saute", "paella", "grill", "fry"], paellera: ["paella"],
-  cuchillo: ["knife", "cutlery", "santoku", "chef"], tijera: ["shear", "scissor"],
-  filtro: ["filter", "fresca", "shower", "air", "purif"], purificador: ["filter", "fresca", "air", "water", "purif"],
-  agua: ["water", "fresca"], aire: ["air"], ducha: ["shower"],
-  jugo: ["juicer", "juice", "extract"], extractor: ["juicer", "extract"], exprimidor: ["juicer", "citrus"],
-  cafe: ["espresso", "barista", "coffee"], cafetera: ["espresso", "barista", "coffee"],
+  // Electrodomésticos
+  licuadora: ["blender", "power"], batidora: ["blender", "mixer"], procesador: ["processor", "blender"],
+  extractor: ["juicer", "extract"], exprimidor: ["juicer", "citrus"], jugo: ["juicer", "juice", "extract"],
+  cafe: ["espresso", "barista", "coffee"], cafetera: ["espresso", "barista", "coffee"], greca: ["espresso", "coffee"],
   te: ["tea", "expertea", "kettle"], tetera: ["tea", "kettle", "expertea"], hervidor: ["kettle"],
-  vaporera: ["steamer", "steam"], plancha: ["griddle", "grill"], parrilla: ["grill", "griddle"],
-  tapa: ["cover", "lid"], tabla: ["board", "cutting"], molde: ["mold", "pan", "bake"],
+  freidora: ["fryer", "fry"], vaporera: ["steamer", "steam"],
+  arrocera: ["rice", "cooker"], parrilla: ["grill", "griddle"], plancha: ["griddle", "grill"],
+  // Ollas y sartenes
+  olla: ["pot", "cookware", "dutch", "saucepan", "stock", "casserole", "system", "roaster"],
+  ollita: ["saucepan", "pot"], cacerola: ["saucepan", "casserole", "pot"], caldero: ["dutch", "stock", "pot"],
+  perol: ["pot", "casserole"], sarten: ["skillet", "pan", "saute", "paella", "grill", "fry"],
+  paellera: ["paella"], wok: ["wok"], horno: ["oven", "roaster", "bake"], asadera: ["roaster", "bake"],
+  bateria: ["set", "system", "cookware"], multiolla: ["system", "pot", "cookware"],
+  // Cuchillería y utensilios
+  cuchillo: ["knife", "cutlery", "santoku", "chef"], cuchilleria: ["knife", "cutlery"],
+  tijera: ["shear", "scissor"], utensilio: ["utensil", "tool", "spatula", "turner"],
+  espatula: ["spatula", "turner"], cucharon: ["ladle"], pinza: ["tong"], tabla: ["board", "cutting"],
+  colador: ["strainer", "colander"], rallador: ["grater"], pelador: ["peeler"],
+  // Filtración
+  filtro: ["filter", "fresca", "shower", "air", "purif"], purificador: ["filter", "fresca", "air", "water", "purif"],
+  agua: ["water", "fresca"], aire: ["air"], ducha: ["ducha", "shower"], regadera: ["ducha", "shower"],
+  cartucho: ["cartridge", "repuesto", "filter"], repuesto: ["cartridge", "repuesto", "replacement"],
+  // Genéricos de venta
   juego: ["set", "system"], set: ["set", "system"], sistema: ["system"], combo: ["set", "system"],
-  utensilio: ["utensil", "tool", "spatula", "turner"], espatula: ["spatula", "turner"], cucharon: ["ladle"],
-  freidora: ["fryer", "fry", "air"], horno: ["oven", "roaster", "bake"], wok: ["wok"],
-  vaso: ["cup", "tumbler", "jar"], jarra: ["pitcher", "jar", "carafe"], termo: ["thermal", "tumbler"],
-  cocina: ["cooking", "cookware", "system"], acero: ["steel", "stainless"], piezas: ["pc", "piece"],
+  equipo: ["set", "system"], paquete: ["set", "system"], kit: ["kit", "set"],
+  tapa: ["cover", "lid"], molde: ["mold", "pan", "bake"], bandeja: ["tray", "pan"],
+  vaso: ["vaso", "cup", "tumbler", "jar"], jarra: ["jarra", "pitcher", "jar", "carafe"], termo: ["termo", "thermal", "tumbler", "vaso"],
+  cocina: ["cooking", "cookware", "system"], acero: ["steel", "stainless"], inoxidable: ["stainless", "steel"],
+  pieza: ["pc", "piece"], piezas: ["pc", "piece"], grande: ["grande", "large", "stock"], pequeno: ["small", "mini"],
+  cuarto: ["qt"], cuartos: ["qt"], litro: ["l", "qt"], litros: ["l", "qt"], pulgada: ["in"], pulgadas: ["in"],
 };
 
+// Normaliza medidas y cantidades para que "12 piezas", "12pz", "12 qt" o
+// "10 pulgadas" encuentren el producto aunque el catálogo los escriba distinto.
+function tokensDeMedida(q: string): string[] {
+  const out: string[] = [];
+  const re = /(\d+)\s*(qt|q|l|lt|litros?|pulgadas?|pulg|in|"|piezas?|pzs?|pc|pcs)?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(q))) {
+    const n = m[1];
+    if (!n) continue;
+    out.push(n);
+    const u = (m[2] || "").toLowerCase();
+    if (/^(qt|q|l|lt|litro)/.test(u)) out.push(`${n} qt`, `${n}qt`);
+    if (/^(pulg|in|")/.test(u)) out.push(`${n}"`, `${n} in`);
+    if (/^(pieza|pz|pc)/.test(u)) out.push(`${n} pc`, `${n} piezas`, `${n} pieza`);
+  }
+  return out;
+}
+
 function expandirConsulta(q: string): Set<string> {
-  const tokens = normalizarTexto(q).split(/\s+/).filter(Boolean);
+  const norm = normalizarTexto(q);
+  const tokens = norm.split(/\s+/).filter(Boolean);
   const out = new Set<string>();
+  for (const t of tokensDeMedida(norm)) out.add(t);
   for (const t of tokens) {
     const r = raizPalabra(t);
     out.add(t); out.add(r);
