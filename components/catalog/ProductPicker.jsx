@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { buscarProductos } from "@/lib/catalog/search";
 import { Search, Package, Boxes, Check, Plus, Minus } from "lucide-react";
 
 /**
@@ -21,13 +22,9 @@ export default function ProductPicker({
 }) {
   const [q, setQ] = useState("");
 
-  const filtrados = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    if (!t) return products;
-    return products.filter((p) =>
-      `${p.name} ${p.line || ""} ${p.category || ""} ${p.brand || ""}`.toLowerCase().includes(t)
-    );
-  }, [q, products]);
+  // Buscador compartido: sinónimos en español, plurales y prefijos, con
+  // resultados en vivo mientras se escribe. Sin consulta muestra el catálogo.
+  const filtrados = useMemo(() => buscarProductos(products, q, q.trim() ? 30 : products.length), [q, products]);
 
   const cantidadDe = (id) => value.find((v) => v.productId === id)?.quantity || 0;
 
