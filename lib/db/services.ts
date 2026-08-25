@@ -58,11 +58,10 @@ export function subscribeCustomers(ctx: Ctx, cb: (rows: any[]) => void, onError?
   return onSnapshot(
     q,
     (snap) => {
-      // Excluir eliminados (soft delete) en memoria: evita índices y mantiene
-      // el historial intacto en la base de datos.
-      const rows = snap.docs
-        .map((d) => ({ id: d.id, ...(d.data() as any) }))
-        .filter((c: any) => !c.isDeleted);
+      // Se devuelven TODOS (incluidos los eliminados, que traen isDeleted).
+      // Filtrarlos aquí impedía distinguir "la lista no cargó" de "el cliente
+      // fue eliminado", y eso hacía desaparecer servicios y seguimientos.
+      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
       cb(sortByDateDesc(rows, "createdAt"));
     },
     onError
