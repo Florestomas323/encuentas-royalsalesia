@@ -66,13 +66,17 @@ export async function POST(req: Request) {
     // 3. Enrutar según el tipo de análisis. Cada rama arma su prompt, llama al
     //    proveedor y valida/normaliza la salida a la forma exacta que espera la UI.
     if (type === "customerProfile") {
+      // Catálogo corto (solo productos vendibles principales) para que la IA
+      // sugiera productos REALES y no invente nombres.
+      const { PRODUCTOS_SUGERIBLES } = await import("@/lib/catalog/static");
       const prompt = customerProfilePrompt({
+        catalog: PRODUCTOS_SUGERIBLES,
         responses: body.responses,
         internalInfo: body.internalInfo,
         observations: body.observations || "",
         familySize: body.familySize,
       });
-      const raw = await runAI(prompt, 1200);
+      const raw = await runAI(prompt, 1800);
       const result = validateCustomerProfile(raw);
       return NextResponse.json({ ok: true, result });
     }
