@@ -43,15 +43,16 @@ import CopilotWidget from "@/components/copilot/CopilotWidget";
 
 // ---------- ENCUESTA (claves semánticas camelCase — solo preguntas para el cliente) ----------
 const PREGUNTAS = [
-  { key: "foodPerception", texto: "¿Qué considera que hace principalmente cuando come?", tipo: "single", opciones: ["Se alimenta", "Se nutre", "Ambas", "No está seguro"], requerida: false },
-  { key: "favoriteMeal", texto: "¿Cuál es el plato o comida favorita de su familia?", tipo: "texto", requerida: false },
-  { key: "primaryCook", texto: "¿Quién cocina principalmente en el hogar?", tipo: "single", opciones: ["Yo", "Mi pareja", "Ambos", "Otro"], requerida: false },
-  { key: "cookingFrequency", texto: "¿Cuántos días por semana cocinan en casa?", tipo: "single", opciones: ["1–2 días", "3–4 días", "5–6 días", "Todos los días"], requerida: true },
-  { key: "wantsHealthierHabits", texto: "¿Les gustaría mejorar sus hábitos de alimentación?", tipo: "single", opciones: ["Sí", "No", "Tal vez"], requerida: true },
-  { key: "cookingHealthImportance", texto: "¿Considera importante la forma en que se preparan los alimentos para la salud de su familia?", tipo: "single", opciones: ["Muy importante", "Importante", "Poco importante", "No lo había pensado"], requerida: true },
-  { key: "cookingPriorities", texto: "¿Qué factores son más importantes al momento de cocinar?", tipo: "multi", opciones: ["Organización", "Rapidez", "Facilidad de limpieza", "Preservación de los alimentos", "Sabor", "Economía", "Salud", "Practicidad", "Durabilidad"], requerida: true },
-  { key: "monthlyFoodBudget", texto: "¿Cuánto aproximadamente invierte su familia mensualmente en alimentos?", tipo: "numero", requerida: true, permiteOmitir: true },
-  { key: "familyPriority", texto: "¿Cuál de estas áreas representa mayor prioridad actualmente para su familia?", tipo: "single", opciones: ["Bienestar y salud", "Economía y ahorro", "Calidad de vida", "Tiempo y practicidad", "Alimentación de los hijos", "Otro"], requerida: true },
+  // Encuesta Inicial del Cliente — refleja exactamente el formulario impreso
+  // "Diagnóstico de hábitos de alimentación en el hogar".
+  { seccion: "Información del Hogar", key: "foodPerception", texto: "¿Considera que su familia actualmente se alimenta o se nutre?", tipo: "single", opciones: ["Principalmente se alimenta", "Se nutre de forma equilibrada", "Desean mejorar sus hábitos alimenticios como familia"], requerida: true },
+  { seccion: "Información del Hogar", key: "favoriteMeal", texto: "¿Cuál es el plato preferido en su hogar?", tipo: "texto", requerida: false },
+  { seccion: "Información del Hogar", key: "primaryCook", texto: "¿Quién cocina con mayor frecuencia?", tipo: "single", opciones: ["Esposo", "Esposa", "Ambos", "Otra persona"], requerida: true },
+  { seccion: "Información del Hogar", key: "wantsHealthierHabits", texto: "¿Le interesaría preparar alimentos de una forma más saludable?", tipo: "single", opciones: ["Sí", "No", "Tal vez"], requerida: true },
+  { seccion: "Información del Hogar", key: "cookingHealthImportance", texto: "¿Cree que la forma en que se preparan los alimentos influye en la salud de su familia?", tipo: "single", opciones: ["Sí", "No", "Tal vez"], requerida: true },
+  { seccion: "Factores importantes al cocinar", key: "cookingPriorities", texto: "Cuando planea las comidas de su familia, ¿qué factores considera más importantes?", ayuda: "Marque los que apliquen", tipo: "multi", opciones: ["Organización", "Rapidez al cocinar", "Facilidad de limpieza", "Preservación de los alimentos", "Sabor", "Economía del hogar"], requerida: true },
+  { seccion: "Inversión en la alimentación familiar", key: "monthlyFoodBudget", texto: "Aproximadamente, ¿cuánto considera que es el presupuesto destinado para alimentar a su familia?", ayuda: "Mensual — el anual y la proyección a 10 años se calculan solos", tipo: "numero", requerida: true, permiteOmitir: true },
+  { seccion: "Prioridades en el Hogar", key: "familyPriority", texto: "Si tuviera que elegir una sola prioridad al invertir en su hogar, ¿cuál sería?", tipo: "single", opciones: ["Bienestar y salud", "Calidad de vida", "Economía y ahorro"], requerida: true },
 ];
 
 // Información privada del vendedor — NO es parte de la encuesta visible al cliente.
@@ -139,7 +140,7 @@ function fmtDia(d) {
   return fecha.toLocaleDateString("es-US", { day: "numeric", month: "short" });
 }
 
-const PROSPECTO_VACIO = { firstName: "", lastName: "", phone: "", familySize: "" };
+const PROSPECTO_VACIO = { firstName: "", lastName: "", partnerName: "", phone: "", familySize: "" };
 const ETIQUETA_ESTADO = { new: "Nuevo", pending: "Pendiente", purchased: "Compró", lost: "No compró" };
 const COLOR_ESTADO = {
   new: "text-gray-600 bg-gray-100 border-gray-200",
@@ -415,6 +416,7 @@ export default function RoyalSalesAIDemo() {
         cid = await createCustomer(ctx, {
           firstName: prospecto.firstName.trim(),
           lastName: prospecto.lastName.trim(),
+          partnerName: prospecto.partnerName.trim(),
           phone,
           familySize: prospecto.familySize ? Number(prospecto.familySize) : null,
         });
@@ -433,7 +435,7 @@ export default function RoyalSalesAIDemo() {
   async function continuarVisita(v) {
     setVisitId(v.id); setCustomerId(v.customerId);
     const c = await getCustomer(v.customerId).catch(() => null);
-    if (c) setProspecto({ firstName: c.firstName || "", lastName: c.lastName || "", phone: c.phone || "", familySize: c.familySize || "" });
+    if (c) setProspecto({ firstName: c.firstName || "", lastName: c.lastName || "", partnerName: c.partnerName || "", phone: c.phone || "", familySize: c.familySize || "" });
     let draft = v.surveyDraft;
     try {
       const local = localStorage.getItem(`rsai-draft-${v.id}`);
@@ -912,6 +914,7 @@ export default function RoyalSalesAIDemo() {
         <div className="px-5 space-y-3 flex-1">
           <Campo label="Nombre *" value={prospecto.firstName} onChange={(v) => setProspecto({ ...prospecto, firstName: v })} placeholder="María" />
           <Campo label="Apellido" value={prospecto.lastName} onChange={(v) => setProspecto({ ...prospecto, lastName: v })} placeholder="González" />
+          <Campo label="Nombre de la pareja" value={prospecto.partnerName} onChange={(v) => setProspecto({ ...prospecto, partnerName: v })} placeholder="Carlos" />
           <Campo label="Teléfono * (con código de país)" value={prospecto.phone} onChange={(v) => { setProspecto({ ...prospecto, phone: v }); setDuplicado(null); }} placeholder="+1 254 555 0100" type="tel" />
           <Campo label="Integrantes de la familia" value={prospecto.familySize} onChange={(v) => setProspecto({ ...prospecto, familySize: v })} placeholder="4" type="number" />
           {prospecto.phone && !phoneOk && <p className="text-xs text-orange-600">Revisa el teléfono — se necesita para el seguimiento por WhatsApp.</p>}
@@ -957,7 +960,12 @@ export default function RoyalSalesAIDemo() {
             </div>
             <p className="text-xs text-gray-400 mt-1">Pregunta {qIndex + 1} de {PREGUNTAS.length}{!pregunta.requerida && " · opcional"}</p>
           </div>
-          <p className="px-5 pb-3 text-xl font-bold text-green-950 leading-snug">{pregunta.texto}</p>
+          {pregunta.seccion && (
+            <p className="px-5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-green-700">{pregunta.seccion}</p>
+          )}
+          <p className="px-5 text-xl font-bold text-green-950 leading-snug">{pregunta.texto}</p>
+          {pregunta.ayuda && <p className="px-5 pt-1 pb-3 text-[13px] text-gray-500">{pregunta.ayuda}</p>}
+          {!pregunta.ayuda && <div className="pb-3" />}
         </div>
         {/* Zona con scroll propio: SOLO las opciones */}
         <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-4">
@@ -995,9 +1003,11 @@ export default function RoyalSalesAIDemo() {
                 onChange={(e) => setRespuestaSingle(e.target.value)}
                 className="w-full border-2 border-gray-100 rounded-xl p-4 text-base text-gray-800 focus:border-green-800 focus:outline-none" placeholder="$ mensual" />
               {respuesta && respuesta !== "omitido" && Number(respuesta) > 0 && (
-                <p className="text-xs text-gray-400 mt-2">
-                  Anual: {formatCurrency(respuesta * 12, orgCurrency)} · 10 años: {formatCurrency(respuesta * 12 * 10, orgCurrency)} (uso interno)
-                </p>
+                <div className="mt-3 rounded-xl bg-green-50 border border-green-100 px-4 py-3 space-y-1">
+                  <p className="flex justify-between text-[13px] text-green-900"><span>Mensual</span><span className="font-semibold">{formatCurrency(Number(respuesta), orgCurrency)}</span></p>
+                  <p className="flex justify-between text-[13px] text-green-900"><span>Anual</span><span className="font-semibold">{formatCurrency(Number(respuesta) * 12, orgCurrency)}</span></p>
+                  <p className="flex justify-between text-[13px] text-green-900"><span>Proyección a 10 años</span><span className="font-semibold">{formatCurrency(Number(respuesta) * 12 * 10, orgCurrency)}</span></p>
+                </div>
               )}
               {pregunta.permiteOmitir && (
                 <button onClick={() => setRespuestaSingle("omitido")}
