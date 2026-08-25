@@ -873,9 +873,12 @@ export default function RoyalSalesAIDemo() {
             </p>
           )}
           <div className="mt-4 grid grid-cols-3 gap-2.5">
-            <KpiCard icon={Home} valor={metricas?.visitasHoy ?? "—"} label={esManager ? "Visitas equipo" : "Visitas hoy"} />
-            <KpiCard icon={TrendingUp} valor={metricas?.ventasHoy ?? "—"} label={esManager ? "Ventas equipo" : "Ventas hoy"} />
-            <KpiCard icon={CalendarClock} valor={seguimientosHoy.length} label="Seguim. hoy" />
+            <KpiCard icon={Home} valor={metricas?.visitasHoy ?? "—"} label={esManager ? "Visitas equipo" : "Visitas hoy"}
+              onClick={() => { setFiltroEstado("todos"); setScreen("clientes"); }} />
+            <KpiCard icon={TrendingUp} valor={metricas?.ventasHoy ?? "—"} label={esManager ? "Ventas equipo" : "Ventas hoy"}
+              onClick={() => { setFiltroEstado("purchased"); setScreen("clientes"); }} />
+            <KpiCard icon={CalendarClock} valor={seguimientosHoy.length} label="Seguim. hoy"
+              onClick={() => setScreen("seguimientos")} />
           </div>
         </div>
 
@@ -1144,55 +1147,80 @@ export default function RoyalSalesAIDemo() {
       <ScreenWrap>
         {Toast}
         <TopBar title="Perfil del cliente" onBack={() => setScreen("infoInterna")} />
-        <div className="px-5 flex-1 space-y-4">
+        <div className="px-5 flex-1 space-y-4 pb-4">
+          {/* Lo esencial de un vistazo, para leer frente al cliente */}
           <div className="bg-green-50 border border-green-100 rounded-2xl p-5 text-center">
             <p className="text-xs font-semibold text-green-700 uppercase mb-1">Motivador principal</p>
             <p className="text-2xl font-bold text-green-950">{perfilIA.primaryMotivator}</p>
+            {perfilIA.secondaryMotivator && (
+              <p className="text-[13px] text-green-700 mt-1">Secundario: {perfilIA.secondaryMotivator}</p>
+            )}
           </div>
-          <div className={`rounded-xl p-4 border flex items-center justify-between ${scoreUI.color}`}>
-            <span className="font-semibold text-sm">Nivel de oportunidad</span>
-            <span className="font-bold">{scoreUI.nivel}</span>
+
+          <div className="grid grid-cols-3 gap-2">
+            <MiniCard label="Oportunidad" valor={scoreUI.nivel} />
+            <MiniCard label="Interés" valor={perfilIA.interestLevel} />
+            <MiniCard label="Precio" valor={perfilIA.priceSensitivity} />
           </div>
+
           <Seccion titulo="Necesidad principal" texto={perfilIA.mainNeed} />
-          <ListaTarjetas titulo="Enfócate en" items={(perfilIA.emphasisPoints || []).slice(0, 3)} color="green" />
-          <ListaTarjetas titulo="Pregunta ahora" items={(perfilIA.questionsToAsk || []).slice(0, 2)} color="green" />
-          <ListaTarjetas titulo="Posible preocupación" items={(perfilIA.likelyConcerns || []).slice(0, 2)} color="red" />
+
+          {/* El ángulo de venta: la frase que orienta toda la presentación */}
+          {perfilIA.sellingAngle && (
+            <div className="rounded-2xl bg-orange-50 border border-orange-200 p-4">
+              <p className="text-xs font-semibold text-orange-700 uppercase mb-1">Ángulo de venta</p>
+              <p className="text-sm text-orange-900 leading-snug">{perfilIA.sellingAngle}</p>
+            </div>
+          )}
+
+          <Seccion titulo="Lectura del cliente" texto={perfilIA.customerSummary} />
+
+          {/* Productos que encajan con esta familia */}
+          {(perfilIA.recommendedProducts || []).length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Productos de posible interés</p>
+              <div className="space-y-1.5">
+                {perfilIA.recommendedProducts.map((prod, i) => (
+                  <div key={i} className="rounded-xl border border-green-100 bg-white p-3">
+                    <p className="text-sm font-semibold text-green-950">{prod.name}</p>
+                    <p className="text-[13px] text-gray-600 mt-0.5 leading-snug">{prod.reason}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <ListaTarjetas titulo="Enfócate en" items={perfilIA.emphasisPoints} color="green" />
+          <ListaTarjetas titulo="Pregunta ahora" items={perfilIA.questionsToAsk} color="green" />
+
+          {/* Objeciones con su respuesta sugerida */}
+          {(perfilIA.objectionResponses || []).length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Si te dicen esto…</p>
+              <div className="space-y-1.5">
+                {perfilIA.objectionResponses.map((o, i) => (
+                  <div key={i} className="rounded-xl border border-gray-100 bg-white p-3">
+                    <p className="text-sm font-semibold text-gray-900">“{o.objection}”</p>
+                    <p className="text-[13px] text-gray-600 mt-1 leading-snug">{o.response}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <ListaTarjetas titulo="Posible preocupación" items={perfilIA.likelyConcerns} color="red" />
+          <ListaTarjetas titulo="Evitar" items={perfilIA.avoidTopics} color="red" />
+          <ListaTarjetas titulo="Contenido recomendado" items={perfilIA.recommendedContent} color="green" />
+
           <p className="text-[11px] text-gray-400">Estas recomendaciones son una guía para ayudarte a comprender mejor las prioridades expresadas por el cliente.</p>
         </div>
         <div className="px-5 py-6 space-y-2">
-          <Boton variant="ghost" onClick={() => setScreen("perfilCompleto")}>
-            <Eye className="w-4 h-4" /> Ver análisis completo
-          </Boton>
-          <Boton variant="gold" onClick={() => setScreen("guiaPresentacion")}>
+          <Boton variant="ghost" onClick={() => setScreen("guiaPresentacion")}>
             <ListChecks className="w-4 h-4" /> Guía de presentación
           </Boton>
-        </div>
-      </ScreenWrap>
-    );
-  }
-
-  // ---------- ANÁLISIS COMPLETO ----------
-  if (screen === "perfilCompleto" && perfilIA) {
-    return (
-      <ScreenWrap>
-        <TopBar title="Análisis completo" onBack={() => setScreen("perfilRapido")} />
-        <div className="px-5 space-y-4 flex-1 pb-4">
-          <div className="grid grid-cols-2 gap-3">
-            <MiniCard label="Motivador principal" valor={perfilIA.primaryMotivator} />
-            <MiniCard label="Motivador secundario" valor={perfilIA.secondaryMotivator} />
-            <MiniCard label="Nivel de interés" valor={perfilIA.interestLevel} />
-            <MiniCard label="Sensibilidad al precio" valor={perfilIA.priceSensitivity} />
-          </div>
-          <Seccion titulo="Necesidad detectada" texto={perfilIA.mainNeed} />
-          <Seccion titulo="Resumen" texto={perfilIA.customerSummary} />
-          <ListaTarjetas titulo="Qué enfatizar" items={perfilIA.emphasisPoints} color="green" />
-          <ListaTarjetas titulo="Evitar" items={perfilIA.avoidTopics} color="red" />
-          <ListaTarjetas titulo="Preguntas recomendadas" items={perfilIA.questionsToAsk} color="green" />
-          <ListaTarjetas titulo="Posibles objeciones" items={perfilIA.likelyConcerns} color="red" />
-          <ListaTarjetas titulo="Contenido recomendado" items={perfilIA.recommendedContent} color="green" />
-        </div>
-        <div className="px-5 py-6">
-          <Boton onClick={() => setScreen("resultado")}>Registrar resultado de la visita</Boton>
+          <Boton variant="gold" onClick={() => setScreen("resultado")}>
+            Resultado de la cita
+          </Boton>
         </div>
       </ScreenWrap>
     );
@@ -1401,16 +1429,19 @@ export default function RoyalSalesAIDemo() {
       const nombre = `${c.firstName || ""} ${c.lastName || ""} ${c.phone || ""}`.toLowerCase();
       return coincideEstado && (!q || nombre.includes(q));
     });
-    const numConServicio = (clientes || []).filter((c) => !c.isDeleted && clientesConServicio.has(c.id)).length;
-    const chips = [
-      ["todos", "Todos"],
-      ["new", ETIQUETA_ESTADO.new || "Nuevo"],
-      ["customer", ETIQUETA_ESTADO.customer || "Cliente"],
-      ["pending", ETIQUETA_ESTADO.pending || "Pendiente"],
-      ...(numConServicio > 0 ? [["servicio", "Con servicio"]] : []),
-    ];
+    // Ya no hay fila fija de filtros: el listado llega filtrado desde los KPIs
+    // del inicio y se muestra un solo chip, quitable, con el filtro activo.
+    const ETIQUETA_FILTRO = {
+      purchased: "Ventas",
+      pending: "Pendientes",
+      lost: "No compraron",
+      new: ETIQUETA_ESTADO.new || "Nuevos",
+      customer: ETIQUETA_ESTADO.customer || "Clientes",
+      servicio: "Con servicio",
+    };
+    const filtroActivo = filtroEstado !== "todos" ? (ETIQUETA_FILTRO[filtroEstado] || filtroEstado) : null;
     return (
-      <Shell active="clientes" setScreen={setScreen} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
+      <Shell active="clientes" setScreen={(p) => { if (p === "clientes") setFiltroEstado("todos"); setScreen(p); }} onNueva={abrirNuevaVisita} serviciosBadge={numServiciosPendientes}>
         {Toast}
         {Copilot}
         <TopBar title="Clientes" subtitle={clientes ? `${clientes.filter((c) => !c.isDeleted).length} en total` : undefined} />
@@ -1431,19 +1462,13 @@ export default function RoyalSalesAIDemo() {
                 </button>
               )}
             </div>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
-              {chips.map(([id, label]) => (
-                <button
-                  key={id}
-                  onClick={() => setFiltroEstado(id)}
-                  className={`shrink-0 px-3.5 h-9 rounded-full text-[13px] font-medium border transition ${
-                    filtroEstado === id ? "bg-brand-dark text-white border-brand-dark" : "bg-card text-muted border-hairline"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {filtroActivo && (
+              <button onClick={() => setFiltroEstado("todos")}
+                className="inline-flex items-center gap-1.5 px-3.5 h-9 rounded-full text-[13px] font-medium bg-brand-dark text-white">
+                {filtroActivo}
+                <XCircle className="w-[15px] h-[15px]" />
+              </button>
+            )}
           </div>
         )}
 
@@ -1463,7 +1488,10 @@ export default function RoyalSalesAIDemo() {
               action={<Boton variant="gold" onClick={abrirNuevaVisita}><Plus className="w-5 h-5" /> Crear primera visita</Boton>}
             />
           ) : lista.length === 0 ? (
-            <EmptyState icon={Search} titulo="Sin resultados" texto="Prueba con otro nombre, teléfono o cambia el filtro de estado." />
+            <EmptyState icon={Search} titulo="Sin resultados"
+              texto={filtroActivo
+                ? `No hay clientes en “${filtroActivo}”. Toca el filtro de arriba para quitarlo.`
+                : "Prueba con otro nombre o teléfono."} />
           ) : lista.map((c) => (
             <button key={c.id} onClick={() => abrirFicha(c)}
               className="w-full bg-card rounded-2xl p-3.5 border border-hairline shadow-card flex items-center gap-3 text-left active:scale-[0.99] transition">
@@ -1858,13 +1886,22 @@ function EmptyState({ icon: Icon, titulo, texto, action }) {
   );
 }
 
-function KpiCard({ icon: Icon, valor, label }) {
-  return (
-    <div className="bg-white/[0.08] rounded-2xl p-3 border border-white/10 backdrop-blur-sm">
+function KpiCard({ icon: Icon, valor, label, onClick }) {
+  const contenido = (
+    <>
       <Icon className="w-4 h-4 text-emerald-300/90 mb-2" strokeWidth={2} />
       <p className="text-white font-display font-bold text-2xl leading-none tabular-nums">{valor}</p>
       <p className="text-emerald-200/70 text-[11px] mt-1.5 font-medium">{label}</p>
-    </div>
+    </>
+  );
+  const clases = "bg-white/[0.08] rounded-2xl p-3 border border-white/10 backdrop-blur-sm";
+  // Con onClick la tarjeta navega al listado correspondiente.
+  if (!onClick) return <div className={clases}>{contenido}</div>;
+  return (
+    <button onClick={onClick} aria-label={`Ver ${label}`}
+      className={`${clases} text-left active:scale-[0.97] transition w-full`}>
+      {contenido}
+    </button>
   );
 }
 
