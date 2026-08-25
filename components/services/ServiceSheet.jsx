@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, CheckCircle2, Package, Wrench, ClipboardCheck } from "lucide-react";
+import { Loader2, CheckCircle2, Package, Wrench, ClipboardCheck, MessageCircle } from "lucide-react";
 import { serviceTypeLabel } from "@/lib/catalog/classify";
 
 /**
@@ -19,6 +19,7 @@ export default function ServiceSheet({
   canComplete = true,
   isManager = false,
   loading = false,
+  waLink = null, // enlace de WhatsApp con el mensaje predeterminado de coordinación
 }) {
   const [pasos, setPasos] = useState([]);
 
@@ -88,6 +89,14 @@ export default function ServiceSheet({
               Mantén el producto empacado hasta realizar este servicio con el cliente.
             </p>
           </div>
+        ) : null}
+
+        {/* Coordinar el servicio con el cliente (mensaje predeterminado) */}
+        {waLink ? (
+          <a href={waLink} target="_blank" rel="noreferrer"
+            className="mt-4 w-full min-h-[44px] rounded-xl bg-accent text-[13px] font-semibold text-white flex items-center justify-center gap-1.5">
+            <MessageCircle className="w-4 h-4" /> Coordinar por WhatsApp
+          </a>
         ) : null}
 
         {/* Progreso del checklist */}
