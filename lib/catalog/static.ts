@@ -31,3 +31,18 @@ function build(): Product[] {
 }
 
 export const CATALOGO_ESTATICO: Product[] = build();
+
+/**
+ * Productos VENDIBLES principales (sistemas de cocina, electrodomésticos,
+ * filtración, cuchillería y café). Es la lista corta que se le pasa a la IA
+ * para que sugiera productos de posible interés: nombres reales del catálogo,
+ * sin accesorios ni repuestos, para no inventar y no gastar tokens de más.
+ */
+export const PRODUCTOS_SUGERIBLES: { name: string; category: string }[] = CATALOGO_ESTATICO
+  .filter((p: any) => {
+    const cat = String(p.category || "");
+    const esPrincipal = ["cooking_system", "appliance", "filtration", "cutlery", "coffee_tea"].includes(cat);
+    const esAccesorio = /accessory|repuesto|replacement/i.test(cat);
+    return esPrincipal && !esAccesorio;
+  })
+  .map((p: any) => ({ name: p.name, category: String(p.category || "") }));
