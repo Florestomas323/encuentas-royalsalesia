@@ -6,8 +6,14 @@ export function customerProfilePrompt(input: {
   internalInfo: unknown;
   observations: string;
   familySize?: string | number | null;
+  /** Lista corta de productos reales del catálogo entre los que puede sugerir. */
+  catalog?: { name: string; category: string }[];
 }) {
-  return `Eres un asistente de análisis comercial para asesores de venta directa de utensilios de cocina premium. Analiza esta encuesta y responde ÚNICAMENTE con un JSON válido, sin backticks, en español.
+  const catalogo = (input.catalog || []).map((p) => `- ${p.name}`).join("\n");
+
+  return `Eres un asesor comercial experto en venta directa de sistemas de cocina y filtración premium en hogares latinos. Analiza esta encuesta hecha durante una visita presencial y prepara al vendedor para vender MEJOR: no describas lo obvio, aporta lectura comercial accionable.
+
+Responde ÚNICAMENTE con un JSON válido, sin backticks, en español.
 
 Reglas estrictas:
 - Usa "unknown" en interestLevel o priceSensitivity si no hay información suficiente. Nunca inventes.
@@ -15,26 +21,39 @@ Reglas estrictas:
 - No hagas afirmaciones médicas ni prometas resultados de salud.
 - No sugieras presión psicológica ni manipulación.
 - No afirmes que el cliente comprará.
+- En recommendedProducts usa EXCLUSIVAMENTE nombres tal cual aparecen en el catálogo de abajo. Si ninguno encaja, devuelve lista vacía.
 
 Encuesta: ${JSON.stringify(input.responses)}
 Información interna de la visita: ${JSON.stringify(input.internalInfo)}
 Tamaño de familia: ${input.familySize || "no especificado"}
 Observaciones del vendedor: ${input.observations || "ninguna"}
 
+Catálogo disponible:
+${catalogo || "(sin catálogo)"}
+
 Formato exacto:
 {
   "primaryMotivator": "",
   "secondaryMotivator": "",
   "mainNeed": "",
-  "customerSummary": "",
+  "customerSummary": "Lectura comercial en 2-3 frases: cómo vive esta familia su cocina, qué la mueve y qué la frena.",
+  "sellingAngle": "El ángulo de venta más fuerte para ESTA familia, en una frase concreta.",
   "emphasisPoints": ["", "", ""],
   "questionsToAsk": ["", ""],
   "avoidTopics": ["", ""],
   "likelyConcerns": ["", ""],
+  "objectionResponses": [
+    { "objection": "objeción probable", "response": "cómo responderla con honestidad, sin presionar" }
+  ],
+  "recommendedProducts": [
+    { "name": "nombre EXACTO del catálogo", "reason": "por qué encaja con esta familia en una frase" }
+  ],
   "recommendedContent": ["", ""],
   "interestLevel": "alto | medio | bajo | unknown",
   "priceSensitivity": "alta | media | baja | unknown"
-}`;
+}
+
+recommendedProducts: máximo 3, el más relevante primero. objectionResponses: máximo 2.`;
 }
 
 export function followupPrompt(input: { outcome: string; reason: string; profile: unknown; currency?: string; locale?: string }) {
