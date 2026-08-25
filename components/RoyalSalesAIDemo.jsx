@@ -185,7 +185,9 @@ export default function RoyalSalesAIDemo() {
   const [clientesError, setClientesError] = useState(false);
   const [followups, setFollowups] = useState(null);
   const [visitaEnProgreso, setVisitaEnProgreso] = useState(null);
-  const [metricas, setMetricas] = useState(null);
+  // Visitas recientes en crudo. Las métricas se derivan de aquí + la lista de
+  // clientes, para poder descontar las de clientes eliminados.
+  const [visitasRecientes, setVisitasRecientes] = useState(null);
   const [fichaCliente, setFichaCliente] = useState(null);
   const [waLogFollowup, setWaLogFollowup] = useState(null);
 
@@ -247,6 +249,26 @@ export default function RoyalSalesAIDemo() {
     return () => { un1(); un2(); un4(); un5 && un5(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.organizationId]);
+
+  // KPIs del día. Se descuentan las visitas de clientes eliminados para que el
+  // número siempre cuadre con lo que se ve en Clientes, Seguimientos y Servicios.
+  const metricas = useMemo(() => {
+    if (!Array.isArray(visitasRecientes)) return null;
+    const eliminados = new Set(
+      (Array.isArray(clientes) && !clientesError ? clientes : []).filter((c) => c.isDeleted).map((c) => c.id),
+    );
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+    const deHoy = visitasRecientes.filter((v) => {
+      if (eliminados.has(v.customerId)) return false;
+      const d = tsToDate(v.createdAt);
+      return d && d >= hoy;
+    });
+    return {
+      visitasHoy: deHoy.length,
+      ventasHoy: deHoy.filter((v) => v.outcome === "purchased").length,
+      pendientesHoy: deHoy.filter((v) => v.outcome === "pending").length,
+    };
+  }, [visitasRecientes, clientes, clientesError]);
 
   // Moneda de la organización (hoy COP/es-CO). Nunca se decide por contexto.
   const orgCurrency = useMemo(() => getOrgCurrency(profile), [profile]);
@@ -365,13 +387,7 @@ export default function RoyalSalesAIDemo() {
     try {
       const [vp, visitas] = await Promise.all([findInProgressVisit(ctx), getRecentVisits(ctx)]);
       setVisitaEnProgreso(vp);
-      const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-      const deHoy = visitas.filter((v) => { const d = tsToDate(v.createdAt); return d && d >= hoy; });
-      setMetricas({
-        visitasHoy: deHoy.length,
-        ventasHoy: deHoy.filter((v) => v.outcome === "purchased").length,
-        pendientesHoy: deHoy.filter((v) => v.outcome === "pending").length,
-      });
+      setVisitasRecientes(visitas);
     } catch { /* sin conexión: se reintenta al volver */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, profile?.organizationId]);
