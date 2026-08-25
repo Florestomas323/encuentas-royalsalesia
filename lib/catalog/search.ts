@@ -6,6 +6,8 @@
 //   ("licuadora" → blender, "olla" → cookware, "cafetera" → espresso...).
 // Regla: basta UNA coincidencia para aparecer; a más coincidencias, más arriba.
 
+import { palabrasClaveDe, esPalabraDeRuido } from "@/lib/catalog/keywords";
+
 export function normalizarTexto(s: unknown): string {
   return String(s || "")
     .toLowerCase()
@@ -50,7 +52,7 @@ export const SINONIMOS: Record<string, string[]> = {
   tapa: ["cover", "lid"], molde: ["mold", "pan", "bake"], bandeja: ["tray", "pan"],
   vaso: ["vaso", "cup", "tumbler", "jar"], jarra: ["jarra", "pitcher", "jar", "carafe"], termo: ["termo", "thermal", "tumbler", "vaso"],
   cocina: ["cooking", "cookware", "system"], acero: ["steel", "stainless"], inoxidable: ["stainless", "steel"],
-  pieza: ["pc", "piece"], piezas: ["pc", "piece"], grande: ["grande", "large", "stock"], pequeno: ["small", "mini"],
+  pieza: ["pc", "piece"], piezas: ["pc", "piece"], grande: ["grande", "large", "stock"], pequeno: ["pequeno", "small"],
   cuarto: ["qt"], cuartos: ["qt"], litro: ["l", "qt"], litros: ["l", "qt"], pulgada: ["in"], pulgadas: ["in"],
 };
 
@@ -101,13 +103,19 @@ export function buscarProductos<T extends Record<string, any>>(productos: T[], c
       // Power Blender y no sus accesorios (que comparten línea "Power Blender").
       const nombre = normalizarTexto(p.name);
       const resto = normalizarTexto([p.category, p.line, p.productFamily, p.brand].filter(Boolean).join(" "));
+      // Jerga oculta del producto ("tamalera", "greca", "comal"...). Nunca se
+      // muestra en pantalla: solo suma puntos aquí.
+      const jerga = palabrasClaveDe(p);
       const palabrasNombre = nombre.split(/[^a-z0-9]+/).filter(Boolean);
       const palabrasResto = resto.split(/[^a-z0-9]+/).filter(Boolean);
       let score = 0;
       if (nombre.includes(q)) score += 8;
+      // La consulta completa dentro de la jerga ("olla para tamales") es señal fuerte.
+      if (q.length >= 4 && jerga.includes(q)) score += 5;
       for (const t of expandidos) {
-        if (!t) continue;
+        if (!t || esPalabraDeRuido(t)) continue;
         if (nombre.includes(t)) { score += 3; continue; }
+        if (jerga.includes(t)) { score += 2; continue; }
         if (resto.includes(t)) { score += 1; continue; }
         // Prefijos en ambos sentidos: "licuad"→"licuadora", "blend"→"blender".
         if (t.length >= 3 && palabrasNombre.some((w) => w.startsWith(t) || (w.length >= 3 && t.startsWith(w)))) { score += 2; continue; }
