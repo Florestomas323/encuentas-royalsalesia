@@ -180,6 +180,9 @@ export default function RoyalSalesAIDemo() {
   const [procesando, setProcesando] = useState(false);
 
   const [clientes, setClientes] = useState(null);
+  // true si la suscripción a clientes falló: en ese caso NO se filtra nada por
+  // cliente, para no esconder servicios ni seguimientos que sí existen.
+  const [clientesError, setClientesError] = useState(false);
   const [followups, setFollowups] = useState(null);
   const [visitaEnProgreso, setVisitaEnProgreso] = useState(null);
   const [metricas, setMetricas] = useState(null);
@@ -229,7 +232,7 @@ export default function RoyalSalesAIDemo() {
   // ---------- listas en tiempo real ----------
   useEffect(() => {
     if (!user || !profile?.organizationId) return;
-    const un1 = subscribeCustomers(ctx, setClientes, () => setClientes([]));
+    const un1 = subscribeCustomers(ctx, (rows) => { setClientesError(false); setClientes(rows); }, () => { setClientesError(true); setClientes([]); });
     const un2 = subscribeFollowups(ctx, setFollowups, () => setFollowups([]));
 
     const un4 = subscribePostSaleServices(ctx, setServicios, () => setServicios([]));
@@ -253,22 +256,24 @@ export default function RoyalSalesAIDemo() {
   // es la única fuente de verdad para dashboard, KPIs y listados.
   const followupsVisibles = useMemo(() => {
     if (!Array.isArray(followups)) return followups; // null mientras carga
-    const activos = new Set((clientes || []).map((c) => c.id));
+    const eliminados = new Set((clientes || []).filter((c) => c.isDeleted).map((c) => c.id));
     return followups.filter((f) => {
       if (f.isActive === false) return false;
       if (f.cancelledReason === "customer_deleted") return false;
-      // Si aún no cargó la lista de clientes, no ocultamos por precaución.
-      if (!Array.isArray(clientes)) return true;
-      return activos.has(f.customerId);
+      // Si la lista no cargó (o falló), no ocultamos nada por precaución.
+      if (!Array.isArray(clientes) || clientesError) return true;
+      return !eliminados.has(f.customerId);
     });
-  }, [followups, clientes]);
+  }, [followups, clientes, clientesError]);
 
   // Servicios postventa pendientes cuyo cliente no esté eliminado.
   const serviciosPendientes = useMemo(() => {
     if (!Array.isArray(servicios)) return servicios; // null mientras carga
-    const activos = new Set((clientes || []).map((c) => c.id));
-    return servicios.filter((s) => (Array.isArray(clientes) ? activos.has(s.customerId) : true));
-  }, [servicios, clientes]);
+    if (!Array.isArray(clientes) || clientesError) return servicios; // sin lista: no filtrar
+    // Solo se oculta si SABEMOS que el cliente fue eliminado.
+    const eliminados = new Set(clientes.filter((c) => c.isDeleted).map((c) => c.id));
+    return servicios.filter((s) => !eliminados.has(s.customerId));
+  }, [servicios, clientes, clientesError]);
 
   // Conjunto de customerId con al menos un servicio pendiente (aviso en ficha).
   const clientesConServicio = useMemo(
@@ -1371,6 +1376,7 @@ export default function RoyalSalesAIDemo() {
     const abrirNuevaVisita = () => { limpiarFlujo(); setScreen("nuevaVisita"); };
     const q = busquedaCliente.trim().toLowerCase();
     const lista = (clientes || []).filter((c) => {
+      if (c.isDeleted) return false; // los eliminados no se listan
       const coincideEstado =
         filtroEstado === "todos" ? true :
         filtroEstado === "servicio" ? clientesConServicio.has(c.id) :
@@ -1378,7 +1384,7 @@ export default function RoyalSalesAIDemo() {
       const nombre = `${c.firstName || ""} ${c.lastName || ""} ${c.phone || ""}`.toLowerCase();
       return coincideEstado && (!q || nombre.includes(q));
     });
-    const numConServicio = (clientes || []).filter((c) => clientesConServicio.has(c.id)).length;
+    const numConServicio = (clientes || []).filter((c) => !c.isDeleted && clientesConServicio.has(c.id)).length;
     const chips = [
       ["todos", "Todos"],
       ["new", ETIQUETA_ESTADO.new || "Nuevo"],
@@ -1425,6 +1431,11 @@ export default function RoyalSalesAIDemo() {
         )}
 
         <div className="px-5 space-y-2.5 pb-28">
+          {clientesError && (
+            <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 mb-1">
+              <p className="text-[13px] text-amber-800">No pudimos cargar tus clientes. Revisa tu conexión y vuelve a entrar a esta pestaña.</p>
+            </div>
+          )}
           {clientes === null ? (
             <SkeletonLista />
           ) : clientes.length === 0 ? (
