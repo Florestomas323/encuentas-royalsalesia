@@ -125,13 +125,16 @@ service cloud.firestore {
     // isTestData ni ownership individual). Cualquier miembro de la org lo lee;
     // la siembra/actualización del catálogo la hace el cliente al iniciar
     // sesión (seedCatalogIfEmpty), así que create/update se permiten dentro de
-    // la organización. No se borra desde cliente salvo limpieza de seeds viejos.
+    // la organización.
+    // BORRADO: solo distribuidor/reviewer. Antes lo permitía a cualquier
+    // miembro, así que un vendedor podía dejar sin catálogo a toda la
+    // distribución (los 179 productos son compartidos, no suyos).
     match /products/{id} {
       allow read: if isSignedIn() && resourceInMyOrg();
       allow create: if isSignedIn() && request.resource.data.organizationId == myOrgId();
       allow update: if isSignedIn() && resourceInMyOrg()
         && request.resource.data.organizationId == resource.data.organizationId;
-      allow delete: if isSignedIn() && resourceInMyOrg();
+      allow delete: if isSignedIn() && resourceInMyOrg() && isOrgManager();
     }
 
     // Fase B/D — servicios postventa. Ownership por assignedSalespersonId.
@@ -147,13 +150,15 @@ service cloud.firestore {
     }
 
     // Fase C/D — contenido oficial de producto. Cualquiera de la org crea/edita
-    // borradores; SOLO un manager puede aprobar/rechazar (cambiar el status).
+    // borradores; SOLO un manager puede aprobar/rechazar (cambiar el status)
+    // o BORRAR (el contenido aprobado es material oficial compartido: antes
+    // cualquier vendedor podía eliminarlo).
     match /productContent/{id} {
       allow create: if isSignedIn() && creatingInMyOrg();
       allow read: if isSignedIn() && resourceInMyOrg();
       allow update: if isSignedIn() && resourceInMyOrg() && protectedFieldsUnchanged()
         && (isOrgManager() || request.resource.data.status == resource.data.status);
-      allow delete: if isSignedIn() && resourceInMyOrg();
+      allow delete: if isSignedIn() && resourceInMyOrg() && isOrgManager();
     }
 
     // Fase E — Royal Copilot.
