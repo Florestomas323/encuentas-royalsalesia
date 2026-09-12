@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { WARRANTY_KNOWLEDGE } from "@/lib/warranty/data";
+import { requireSuperAdmin, esAuthError } from "@/lib/auth/server";
 
 // Siembra la colección GLOBAL `warrantyKnowledge` con el conocimiento oficial
 // de garantías Royal Prestige / Hy Cite. Protegido con SEED_ADMIN_SECRET (igual
@@ -11,11 +12,12 @@ function fail(message: string, status: number) {
 }
 
 // GET: diagnóstico sin escribir. ¿Cuántos registros hay ya sembrados?
-export async function GET(req: NextRequest) {
-  const secret = (req.nextUrl.searchParams.get("secret") || "").trim();
-  const expected = process.env.SEED_ADMIN_SECRET?.trim();
-  if (!expected) return fail("SEED_ADMIN_SECRET no está configurado en Vercel.", 500);
-  if (secret !== expected) return fail("El secreto no coincide.", 401);
+// AUTORIZACIÓN: ya no hay secreto compartido ni parámetros en la URL. Exige un
+// ID token de Firebase de un usuario registrado en `systemAdmins` (super
+// administrador), verificado en servidor. Un distribuidor recibe 403.
+export async function GET(req: Request) {
+  const admin = await requireSuperAdmin(req);
+  if (esAuthError(admin)) return fail(admin.error, admin.status);
 
   try {
     const { adminDb } = await import("@/lib/firebase/admin");
@@ -33,20 +35,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST: siembra/actualiza los registros.
-export async function POST(req: NextRequest) {
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    return fail("No pudimos leer la solicitud. Intenta de nuevo.", 400);
-  }
-
-  const secret = String(body?.secret || "").trim();
-  const expected = process.env.SEED_ADMIN_SECRET?.trim();
-  if (!expected) return fail("SEED_ADMIN_SECRET no está configurado en Vercel.", 500);
-  if (!secret) return fail("Escribe el secreto para continuar.", 400);
-  if (secret !== expected) return fail("El secreto ingresado no coincide.", 401);
+// POST: siembra/actualiza los registros. Solo super administrador.
+export async function POST(req: Request) {
+  const admin = await requireSuperAdmin(req);
+  if (esAuthError(admin)) return fail(admin.error, admin.status);
 
   let adminDb: any, FieldValue: any;
   try {
