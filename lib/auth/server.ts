@@ -62,6 +62,15 @@ export async function getServerProfile(uid: string): Promise<Record<string, any>
   return snap.exists ? (snap.data() as Record<string, any>) : null;
 }
 
+/**
+ * Normalización ÚNICA del correo. La usan por igual la creación de
+ * invitaciones y su reclamación en el primer inicio de sesión, para que
+ * "Persona@Gmail.com " y "persona@gmail.com" sean siempre el mismo correo.
+ */
+export function normalizarEmail(valor: unknown): string {
+  return typeof valor === "string" ? valor.trim().toLowerCase().slice(0, 254) : "";
+}
+
 /** Id determinista de membresía, igual al que ya usaba el proyecto. */
 export function membershipId(organizationId: string, uid: string): string {
   return `${organizationId}_${uid}`;
