@@ -48,6 +48,7 @@ const OBJECIONES = [
 // Subtemas al explicar un producto.
 const TEMAS = [
   { key: "beneficios", label: "Beneficios", q: (p) => `¿Cuáles son los beneficios clave de ${p}?` },
+  { key: "caracteristicas", label: "Características", q: (p) => `¿Cuáles son las características y especificaciones de ${p}?` },
   { key: "incluye", label: "Qué incluye", q: (p) => `¿Qué incluye ${p}?` },
   { key: "uso", label: "Uso", q: (p) => `¿Cómo se usa ${p}?` },
   { key: "cuidados", label: "Cuidados", q: (p) => `¿Qué cuidados necesita ${p}?` },
@@ -72,6 +73,9 @@ export default function CopilotWidget({ getToken, customer, productos = [], cust
   // Flujo guiado activo: { type: "objection" | "objection-otra" | "pick" | "topic", next?, product?, busqueda? }
   const [flujo, setFlujo] = useState(null)
   const [busqueda, setBusqueda] = useState("")
+  // Producto del que se está hablando al usar "Otra pregunta": se envía con la
+  // siguiente pregunta libre para que el servidor cargue su ficha oficial.
+  const [productoActivo, setProductoActivo] = useState(null)
   const [objetraTexto, setObjetraTexto] = useState("")
   const finRef = useRef(null)
   const inputRef = useRef(null)
@@ -96,6 +100,10 @@ export default function CopilotWidget({ getToken, customer, productos = [], cust
   async function enviar(texto, extra = {}) {
     const pregunta = (texto ?? input).trim()
     if (!pregunta || cargando) return
+    // Pregunta libre tras elegir un producto: se arrastra su id.
+    if (!extra.productId && productoActivo) {
+      extra = { ...extra, productId: productoActivo.id, productName: productoActivo.name }
+    }
     setInput("")
     setFlujo(null)
     setObjetraTexto("")
@@ -171,6 +179,7 @@ export default function CopilotWidget({ getToken, customer, productos = [], cust
       enviar(`¿Qué garantía tiene ${prod.name}?`, { productId: prod.id, productName: prod.name, flow: "warranty" })
     } else if (t.prefill) {
       setFlujo(null)
+      setProductoActivo({ id: prod.id, name: prod.name })
       const base = `Sobre ${prod.name}: `
       setInput(base)
       setTimeout(() => {
@@ -183,7 +192,7 @@ export default function CopilotWidget({ getToken, customer, productos = [], cust
   }
 
   function nuevaConversacion() {
-    setMensajes([]); setConversationId(null); setInput(""); setFlujo(null)
+    setMensajes([]); setConversationId(null); setInput(""); setFlujo(null); setProductoActivo(null)
   }
 
   async function copiar(texto, key) {
