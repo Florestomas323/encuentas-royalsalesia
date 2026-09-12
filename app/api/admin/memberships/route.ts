@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { requireSuperAdmin, esAuthError, membershipId } from "@/lib/auth/server";
+import { esRolAsignable } from "@/types/user";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,10 +14,6 @@ export const dynamic = "force-dynamic";
 // y `users/{uid}.role`, que es de donde el resto de la aplicación (Ctx, reglas
 // de Firestore, consultas) obtiene el workspace activo. Así no hubo que
 // reescribir ninguna consulta comercial existente.
-
-// Roles que un super administrador puede asignar dentro de un workspace.
-// `super_admin` NO está aquí a propósito: no se concede desde este endpoint.
-const ROLES_ASIGNABLES = ["distributor", "salesperson", "reviewer"] as const;
 
 function deny(e: { status: number; error: string }) {
   return NextResponse.json({ ok: false, error: e.error }, { status: e.status });
@@ -45,7 +42,9 @@ export async function POST(req: Request) {
   if (!uid || !organizationId) {
     return NextResponse.json({ ok: false, error: "Falta el usuario o el workspace." }, { status: 400 });
   }
-  if (!(ROLES_ASIGNABLES as readonly string[]).includes(role)) {
+  // Los roles asignables viven en types/user.ts (fuente única compartida con
+  // el panel y con las invitaciones). `super_admin` nunca está en esa lista.
+  if (!esRolAsignable(role)) {
     return NextResponse.json({ ok: false, error: "Rol no permitido." }, { status: 400 });
   }
 
