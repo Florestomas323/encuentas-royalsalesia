@@ -205,6 +205,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Fichas oficiales de producto (base de conocimiento del Copilot). También
+    // es contenido maestro GLOBAL: cualquier usuario autenticado puede leerlo,
+    // nadie puede escribirlo desde el cliente. Las escribe únicamente el
+    // endpoint /api/admin/seed-product-knowledge con el Admin SDK, que exige
+    // super administrador.
+    match /productKnowledge/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     // Conversaciones del Copilot. Las escribe SOLO el servidor (Admin SDK); el
     // cliente únicamente puede LEER las suyas (uid propio). Los mensajes viven
     // en una subcolección y también guardan uid para poder filtrarlos aquí.
