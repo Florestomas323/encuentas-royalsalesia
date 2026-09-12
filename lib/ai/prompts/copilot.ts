@@ -76,6 +76,8 @@ export function copilotPrompt(input: {
   customerContext?: string | null;
   warrantyContext?: string | null;
   productContext?: string | null;
+  /** Ficha oficial estructurada del producto (`productKnowledge`). */
+  knowledgeContext?: string | null;
   objection?: string | null;
   topic?: string | null;
   locale?: string;
@@ -99,6 +101,12 @@ export function copilotPrompt(input: {
   }
   if (input.productContext) {
     partes.push(`\n--- CONTENIDO OFICIAL DE PRODUCTO APROBADO (única fuente permitida) ---\n${input.productContext}`);
+  }
+  if (input.knowledgeContext) {
+    partes.push(
+      `\n--- FICHA OFICIAL DEL PRODUCTO (fuente factual prioritaria) ---\n${input.knowledgeContext}` +
+        `\n\nUtiliza exclusivamente la información factual proporcionada en esta ficha. Puedes reorganizar, explicar o adaptar el lenguaje al cliente, pero NO inventes características, beneficios, garantías, certificaciones, materiales, capacidades, dimensiones, recetas ni resultados. Respeta las AFIRMACIONES APROBADAS y no cometas ninguna de las AFIRMACIONES PROHIBIDAS. Si te preguntan algo que no está en la ficha, responde exactamente: "Esta información no está disponible actualmente en la ficha oficial del producto."`
+    );
   }
 
   if (input.history?.length) {
