@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// FASE 3A/3B — multi-tenant real.
+// Multi-tenant real + super administrador global.
 // Principios:
 // 1. Nadie lee ni escribe fuera de su organizationId.
 // 2. En /users no hay writes desde el cliente — role, organizationId e isTestUser
@@ -17,14 +17,30 @@ service cloud.firestore {
     function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
     function myRole() { return me().role; }
     function myOrgId() { return me().organizationId; }
-    function isOrgManager() { return myRole() == 'distributor' || myRole() == 'reviewer'; }
+
+    // SUPER ADMINISTRADOR GLOBAL.
+    // La única fuente de verdad es /systemAdmins/{uid}, colección que NADIE
+    // puede escribir desde el cliente (write: false más abajo): solo la crea el
+    // Admin SDK desde el servidor. Cambiar el correo, el rol en /users o
+    // cualquier campo desde el navegador NO concede este privilegio.
+    function isSuperAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/systemAdmins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/systemAdmins/$(request.auth.uid)).data.active != false;
+    }
+
+    function isOrgManager() {
+      return isSuperAdmin() || myRole() == 'distributor' || myRole() == 'reviewer';
+    }
 
     function creatingInMyOrg() {
       return request.resource.data.organizationId == myOrgId()
         && request.resource.data.isTestData == me().isTestUser
         && request.resource.data.createdBy == request.auth.uid;
     }
-    function resourceInMyOrg() { return resource.data.organizationId == myOrgId(); }
+    // El super admin accede a cualquier workspace para soporte/administración;
+    // el resto, únicamente a su propia organización.
+    function resourceInMyOrg() { return isSuperAdmin() || resource.data.organizationId == myOrgId(); }
     function ownsResource() { return resource.data.salespersonId == request.auth.uid; }
     function protectedFieldsUnchanged() {
       return request.resource.data.organizationId == resource.data.organizationId
@@ -33,16 +49,33 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;   // role/organizationId/active los escribe solo el servidor
+    }
+
+    // Registro de super administradores. Cada quien puede LEER solo su propio
+    // documento (para que la app sepa si mostrar el panel). Nadie escribe:
+    // el bootstrap y las altas ocurren en el servidor con el Admin SDK.
+    match /systemAdmins/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
       allow write: if false;
     }
 
+    // Workspaces (colección histórica `organizations`).
     match /organizations/{orgId} {
-      allow read: if isSignedIn() && myOrgId() == orgId;
-      allow write: if false;
+      allow read: if isSignedIn() && (isSuperAdmin() || myOrgId() == orgId);
+      allow write: if false;   // crear/activar workspaces: solo /api/admin/workspaces
     }
 
+    // Membresías (colección histórica `organizationMembers`). Cada usuario ve
+    // las suyas; un manager, las de su propio workspace; el super admin, todas.
+    // Nunca se escriben desde el cliente: un distribuidor no puede alterar
+    // membresías ni concederse otro rol.
     match /organizationMembers/{memberId} {
-      allow read: if isSignedIn() && resource.data.organizationId == myOrgId();
+      allow read: if isSignedIn() && (
+        isSuperAdmin()
+        || resource.data.uid == request.auth.uid
+        || (isOrgManager() && resource.data.organizationId == myOrgId())
+      );
       allow write: if false;
     }
 
@@ -126,15 +159,15 @@ service cloud.firestore {
     // la siembra/actualización del catálogo la hace el cliente al iniciar
     // sesión (seedCatalogIfEmpty), así que create/update se permiten dentro de
     // la organización.
-    // BORRADO: solo distribuidor/reviewer. Antes lo permitía a cualquier
-    // miembro, así que un vendedor podía dejar sin catálogo a toda la
-    // distribución (los 179 productos son compartidos, no suyos).
+    // BORRADO: SOLO super administrador. El catálogo es material compartido por
+    // todo el workspace (179 productos): ni un vendedor ni un distribuidor
+    // deben poder vaciarlo desde el cliente. La lectura no cambia.
     match /products/{id} {
       allow read: if isSignedIn() && resourceInMyOrg();
       allow create: if isSignedIn() && request.resource.data.organizationId == myOrgId();
       allow update: if isSignedIn() && resourceInMyOrg()
         && request.resource.data.organizationId == resource.data.organizationId;
-      allow delete: if isSignedIn() && resourceInMyOrg() && isOrgManager();
+      allow delete: if isSuperAdmin();
     }
 
     // Fase B/D — servicios postventa. Ownership por assignedSalespersonId.
@@ -158,6 +191,8 @@ service cloud.firestore {
       allow read: if isSignedIn() && resourceInMyOrg();
       allow update: if isSignedIn() && resourceInMyOrg() && protectedFieldsUnchanged()
         && (isOrgManager() || request.resource.data.status == resource.data.status);
+      // Borrar contenido oficial: dueño del workspace (distributor/reviewer) o
+      // super admin. Un vendedor nunca.
       allow delete: if isSignedIn() && resourceInMyOrg() && isOrgManager();
     }
 
