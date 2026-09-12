@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Plus, ShieldCheck, Users, Building2, ArrowLeft, Check, X, BookOpen } from "lucide-react";
+import { Loader2, Plus, ShieldCheck, Users, Building2, ArrowLeft, Check, X, BookOpen, LogIn, DoorOpen } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import type { AdminUserRow, Workspace } from "@/types/user";
 
@@ -15,7 +15,7 @@ import type { AdminUserRow, Workspace } from "@/types/user";
 const ROLES = ["distributor", "salesperson", "reviewer"] as const;
 
 export default function AdminPage() {
-  const { user, loading, isSuperAdmin, getIdToken, signOut } = useAuth();
+  const { user, profile, loading, isSuperAdmin, getIdToken, signOut } = useAuth();
   const router = useRouter();
 
   const [cargando, setCargando] = useState(true);
@@ -126,6 +126,41 @@ export default function AdminPage() {
     }
   }
 
+  // "Entrar al workspace": el servidor cambia SOLO el workspace activo del
+  // super admin (users/{uid}.organizationId). El rol no se toca y no se copia
+  // ningún dato; la app simplemente pasa a consultar esa organización.
+  async function entrarAlWorkspace(w: Workspace) {
+    if (ocupado) return;
+    setOcupado(true);
+    try {
+      await llamar("/api/admin/active-workspace", {
+        method: "POST",
+        body: JSON.stringify({ organizationId: w.id }),
+      });
+      router.push("/");
+    } catch (e: any) {
+      setAviso(e?.message);
+      setOcupado(false);
+    }
+  }
+
+  async function salirDelWorkspace() {
+    if (ocupado) return;
+    setOcupado(true);
+    try {
+      await llamar("/api/admin/active-workspace", {
+        method: "POST",
+        body: JSON.stringify({ organizationId: null }),
+      });
+      setAviso("Saliste del workspace.");
+      await cargar();
+    } catch (e: any) {
+      setAviso(e?.message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
   async function sembrarGarantias() {
     if (ocupado) return;
     setOcupado(true);
@@ -198,6 +233,16 @@ export default function AdminPage() {
               <Building2 className="w-4 h-4" /> Workspaces ({workspaces.length})
             </h2>
 
+            {profile?.organizationId && (
+              <p className="text-[12.5px] text-brand-dark bg-brand/[0.06] border border-brand/15 rounded-xl px-3 py-2 mb-3">
+                Estás dentro de{" "}
+                <span className="font-semibold">
+                  {workspaces.find((w) => w.id === profile.organizationId)?.name || profile.organizationId}
+                </span>
+                . La aplicación muestra los datos de ese workspace.
+              </p>
+            )}
+
             <div className="flex gap-2 mb-3">
               <input
                 value={nombreNuevo}
@@ -216,25 +261,50 @@ export default function AdminPage() {
 
             <div className="space-y-2">
               {workspaces.length === 0 && <p className="text-[13px] text-muted">Todavía no hay workspaces.</p>}
-              {workspaces.map((w) => (
-                <div key={w.id} className="flex items-center gap-3 bg-card border border-hairline rounded-xl px-3 py-2.5">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-display font-semibold text-[14px] text-brand-deep truncate">{w.name}</p>
-                    <p className="text-[11px] text-muted break-all">{w.id}</p>
+              {workspaces.map((w) => {
+                const esActual = profile?.organizationId === w.id;
+                return (
+                  <div key={w.id} className="bg-card border border-hairline rounded-xl px-3 py-2.5">
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-display font-semibold text-[14px] text-brand-deep truncate">{w.name}</p>
+                        <p className="text-[11px] text-muted break-all">{w.id}</p>
+                      </div>
+                      <button
+                        onClick={() => cambiarEstadoWorkspace(w)}
+                        disabled={ocupado}
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border shrink-0 ${
+                          w.active
+                            ? "bg-brand/[0.06] border-brand/15 text-brand-dark"
+                            : "bg-red-50 border-red-100 text-danger"
+                        }`}
+                      >
+                        {w.active ? "Activo" : "Inactivo"}
+                      </button>
+                    </div>
+
+                    <div className="flex gap-2 mt-2.5">
+                      <button
+                        onClick={() => entrarAlWorkspace(w)}
+                        disabled={ocupado}
+                        className="flex-1 min-h-[40px] rounded-xl bg-brand-dark text-white text-[13px] font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        {esActual ? "Volver a entrar" : "Entrar al workspace"}
+                      </button>
+                      {esActual && (
+                        <button
+                          onClick={salirDelWorkspace}
+                          disabled={ocupado}
+                          className="min-h-[40px] px-3 rounded-xl bg-brand/[0.06] border border-brand/15 text-[13px] font-semibold text-brand-dark flex items-center gap-1.5 disabled:opacity-40"
+                        >
+                          <DoorOpen className="w-4 h-4" /> Salir
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <button
-                    onClick={() => cambiarEstadoWorkspace(w)}
-                    disabled={ocupado}
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${
-                      w.active
-                        ? "bg-brand/[0.06] border-brand/15 text-brand-dark"
-                        : "bg-red-50 border-red-100 text-danger"
-                    }`}
-                  >
-                    {w.active ? "Activo" : "Inactivo"}
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
