@@ -119,8 +119,9 @@ export async function POST(req: Request) {
     //     modelo pueda aportar y sí mucho que pueda inventar, así que ni se
     //     llama. Si el producto todavía no tiene ficha, `pk` es null y el flujo
     //     sigue exactamente como antes (IA con catálogo + contenido aprobado).
-    if (productId) {
-      const pk = await getProductKnowledge(productId);
+    const pkDirecta: ProductKnowledge | null = productId ? await getProductKnowledge(productId) : null;
+    {
+      const pk = pkDirecta;
       if (pk) {
         if (esTopicEstructurado(topic)) {
           return NextResponse.json({
@@ -185,11 +186,15 @@ export async function POST(req: Request) {
     // Pregunta abierta sobre un producto identificado: la ficha oficial se le
     // entrega al modelo como fuente única, para que pueda reformular y adaptar
     // el lenguaje sin añadir nada que no esté aprobado.
+    // Si el vendedor eligió el producto en el selector, ya la tenemos; si
+    // escribió libremente, se resuelve por el producto identificado en el texto.
+    // Va SIEMPRE que haya producto identificable, sin depender de la intención:
+    // "¿cómo se la explico a alguien que ya tiene sartenes?" se clasifica como
+    // general y aun así debe responderse con la ficha, no de memoria.
     let knowledgeContext: string | null = null;
-    if (matched.length === 1) {
-      const pk: ProductKnowledge | null = await getProductKnowledge(matched[0].id);
-      if (pk) knowledgeContext = knowledgeContextText(pk);
-    }
+    const pkContexto: ProductKnowledge | null =
+      pkDirecta || (matched.length === 1 ? await getProductKnowledge(matched[0].id) : null);
+    if (pkContexto) knowledgeContext = knowledgeContextText(pkContexto);
 
     // Garantía: SIEMPRE sobre un producto. Si no hay producto identificado y no
     // se pidieron reglas generales, pedimos el producto (sin IA, sin política
