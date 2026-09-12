@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Plus, ShieldCheck, Users, Building2, ArrowLeft, Check, X, BookOpen, LogIn, DoorOpen } from "lucide-react";
+import { Loader2, Plus, ShieldCheck, Users, Building2, ArrowLeft, Check, X, BookOpen, LogIn, DoorOpen, MailPlus } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import type { AdminUserRow, Workspace } from "@/types/user";
+import type { AdminUserRow, Workspace, WorkspaceInvitation } from "@/types/user";
+import { ASSIGNABLE_ROLES } from "@/types/user";
 
 // Panel del SUPER ADMINISTRADOR.
 // La marca `isSuperAdmin` solo decide qué se PINTA. La autorización real está
@@ -12,7 +13,8 @@ import type { AdminUserRow, Workspace } from "@/types/user";
 // `systemAdmins` en el servidor: abrir esta URL sin ser super admin no sirve
 // de nada, porque todas las llamadas responden 403.
 
-const ROLES = ["distributor", "salesperson", "reviewer"] as const;
+// Roles reales del proyecto, desde la fuente única en types/user.ts.
+const ROLES = ASSIGNABLE_ROLES;
 
 export default function AdminPage() {
   const { user, profile, loading, isSuperAdmin, getIdToken, signOut } = useAuth();
@@ -22,6 +24,10 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [usuarios, setUsuarios] = useState<AdminUserRow[]>([]);
+  const [invitaciones, setInvitaciones] = useState<WorkspaceInvitation[]>([]);
+  const [invEmail, setInvEmail] = useState("");
+  const [invOrg, setInvOrg] = useState("");
+  const [invRole, setInvRole] = useState<string>("salesperson");
   const [nombreNuevo, setNombreNuevo] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -51,9 +57,14 @@ export default function AdminPage() {
     setCargando(true);
     setError(null);
     try {
-      const [w, u] = await Promise.all([llamar("/api/admin/workspaces"), llamar("/api/admin/users")]);
+      const [w, u, i] = await Promise.all([
+        llamar("/api/admin/workspaces"),
+        llamar("/api/admin/users"),
+        llamar("/api/admin/invitations"),
+      ]);
       setWorkspaces(w.workspaces || []);
       setUsuarios(u.users || []);
+      setInvitaciones(i.invitations || []);
     } catch (e: any) {
       setError(e?.message || "No pudimos cargar el panel.");
     } finally {
@@ -153,6 +164,42 @@ export default function AdminPage() {
         body: JSON.stringify({ organizationId: null }),
       });
       setAviso("Saliste del workspace.");
+      await cargar();
+    } catch (e: any) {
+      setAviso(e?.message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  // Invitar por correo a alguien que todavía no ha iniciado sesión. El correo,
+  // el workspace y el rol quedan guardados en el servidor; la persona solo tiene
+  // que entrar con Google y el sistema le asigna su acceso.
+  async function crearInvitacion() {
+    const email = invEmail.trim().toLowerCase();
+    if (!email || !invOrg || ocupado) return;
+    setOcupado(true);
+    try {
+      await llamar("/api/admin/invitations", {
+        method: "POST",
+        body: JSON.stringify({ email, organizationId: invOrg, role: invRole }),
+      });
+      setInvEmail("");
+      setAviso(`Invitación creada para ${email}.`);
+      await cargar();
+    } catch (e: any) {
+      setAviso(e?.message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function cancelarInvitacion(id: string) {
+    if (ocupado) return;
+    setOcupado(true);
+    try {
+      await llamar("/api/admin/invitations", { method: "DELETE", body: JSON.stringify({ id }) });
+      setAviso("Invitación cancelada.");
       await cargar();
     } catch (e: any) {
       setAviso(e?.message);
@@ -397,6 +444,79 @@ export default function AdminPage() {
                   </div>
                 );
               })}
+            </div>
+          </section>
+
+          {/* ---------- INVITACIONES ---------- */}
+          <section>
+            <h2 className="font-display font-bold text-brand-deep text-[16px] flex items-center gap-2 mb-3">
+              <MailPlus className="w-4 h-4" /> Invitar usuario
+            </h2>
+
+            <div className="space-y-2 mb-4">
+              <input
+                type="email"
+                inputMode="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                value={invEmail}
+                onChange={(e) => setInvEmail(e.target.value)}
+                placeholder="correo@gmail.com"
+                className={input}
+              />
+              <select value={invOrg} onChange={(e) => setInvOrg(e.target.value)} className={input}>
+                <option value="">Workspace…</option>
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+              <select value={invRole} onChange={(e) => setInvRole(e.target.value)} className={input}>
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+              <button
+                onClick={crearInvitacion}
+                disabled={ocupado || !invEmail.trim() || !invOrg}
+                className="w-full min-h-[44px] rounded-xl bg-brand-dark text-white text-[13px] font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
+              >
+                <MailPlus className="w-4 h-4" /> Crear invitación
+              </button>
+              <p className="text-[12px] text-muted">
+                No se envía ningún correo todavía: dile a la persona que entre a Royal Sales AI con Google
+                y su acceso se activa solo.
+              </p>
+            </div>
+
+            <h3 className="font-display font-semibold text-brand-deep text-[14px] mb-2">
+              Invitaciones pendientes ({invitaciones.filter((i) => i.status === "pending").length})
+            </h3>
+            <div className="space-y-2">
+              {invitaciones.filter((i) => i.status === "pending").length === 0 && (
+                <p className="text-[13px] text-muted">No hay invitaciones pendientes.</p>
+              )}
+              {invitaciones
+                .filter((i) => i.status === "pending")
+                .map((i) => (
+                  <div key={i.id} className="flex items-center gap-3 bg-card border border-hairline rounded-xl px-3 py-2.5">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-display font-semibold text-[14px] text-brand-deep truncate">{i.email}</p>
+                      <p className="text-[12px] text-muted truncate">
+                        {i.organizationName} · {i.role}
+                      </p>
+                      <span className="inline-block mt-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-accent-soft text-accent border border-accent/15">
+                        Pendiente
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => cancelarInvitacion(i.id)}
+                      disabled={ocupado}
+                      className="shrink-0 min-h-[40px] px-3 rounded-xl bg-red-50 border border-red-100 text-[13px] font-semibold text-danger disabled:opacity-40"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ))}
             </div>
           </section>
 
