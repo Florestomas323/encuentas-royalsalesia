@@ -105,7 +105,7 @@ export function copilotPrompt(input: {
   if (input.knowledgeContext) {
     partes.push(
       `\n--- FICHA OFICIAL DEL PRODUCTO (fuente factual prioritaria) ---\n${input.knowledgeContext}` +
-        `\n\nUtiliza exclusivamente la información factual proporcionada en esta ficha. Puedes reorganizar, explicar o adaptar el lenguaje al cliente, pero NO inventes características, beneficios, garantías, certificaciones, materiales, capacidades, dimensiones, recetas ni resultados. Respeta las AFIRMACIONES APROBADAS y no cometas ninguna de las AFIRMACIONES PROHIBIDAS. Si te preguntan algo que no está en la ficha, responde exactamente: "Esta información no está disponible actualmente en la ficha oficial del producto."`
+        `\n\nResponde utilizando ÚNICAMENTE los hechos contenidos en esta ficha. Puedes explicar, resumir, comparar y adaptar el lenguaje a una conversación comercial dentro de los límites de esos datos, y apoyarte en los ARGUMENTOS DE VENTA y las OBJECIONES PREPARADAS. NO inventes especificaciones, materiales, capacidades, dimensiones, certificaciones, porcentajes, beneficios médicos, garantías, recetas oficiales ni resultados. Respeta las AFIRMACIONES APROBADAS y no cometas ninguna de las AFIRMACIONES PROHIBIDAS. Si la ficha no contiene la respuesta, dilo claramente con esta frase y no la sustituyas por una suposición: "No encuentro ese dato en la información oficial disponible del producto."`
     );
   }
 
