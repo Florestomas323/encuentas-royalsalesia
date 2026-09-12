@@ -3,9 +3,10 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import {
   onAuthStateChanged,
-  signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
   signOut as firebaseSignOut,
-  sendPasswordResetEmail,
   type User,
 } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
@@ -39,9 +40,13 @@ type AuthContextValue = {
   loading: boolean;
   // Diagnóstico para saber POR QUÉ no hay perfil (no existe vs. permiso vs. red).
   profileDiagnostics: ProfileDiagnostics;
-  signIn: (email: string, password: string) => Promise<void>;
+  /** ¿Está registrado en `systemAdmins`? Solo sirve para MOSTRAR el panel;
+   *  la autorización real la hace el servidor en cada endpoint. */
+  isSuperAdmin: boolean;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
+  /** ID token fresco para llamar a los endpoints /api/admin/*. */
+  getIdToken: () => Promise<string | null>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -54,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profileStatus, setProfileStatus] = useState<ProfileStatus>("loading");
   const [profileErrorCode, setProfileErrorCode] = useState<string | null>(null);
   const [profileFromCache, setProfileFromCache] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   const clientProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? null;
 
@@ -65,6 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfile(null);
         setProfileStatus("loading");
         setProfileErrorCode(null);
+        setIsSuperAdmin(false);
       }
     });
     return unsubscribe;
@@ -107,16 +114,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, [user]);
 
-  async function signIn(email: string, password: string) {
-    await signInWithEmailAndPassword(auth, email, password);
+  // Marca de super administrador: se lee systemAdmins/{uid}, documento que el
+  // usuario puede LEER (solo el suyo) pero nunca escribir. Si no existe o la
+  // lectura falla, se asume que no lo es.
+  useEffect(() => {
+    if (!user) return;
+    const ref = doc(db, "systemAdmins", user.uid);
+    const unsubscribe = onSnapshot(
+      ref,
+      (snap) => setIsSuperAdmin(snap.exists() && (snap.data() as any)?.active !== false),
+      () => setIsSuperAdmin(false)
+    );
+    return unsubscribe;
+  }, [user]);
+
+  async function signInWithGoogle() {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      // En algunos navegadores móviles la ventana emergente se bloquea; ahí
+      // se continúa con redirección, que es el flujo compatible en iOS.
+      const code = err?.code || "";
+      if (
+        code === "auth/popup-blocked" ||
+        code === "auth/operation-not-supported-in-this-environment" ||
+        code === "auth/cancelled-popup-request"
+      ) {
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+      throw err;
+    }
   }
 
   async function signOut() {
     await firebaseSignOut(auth);
   }
 
-  async function resetPassword(email: string) {
-    await sendPasswordResetEmail(auth, email);
+  async function getIdToken() {
+    if (!auth.currentUser) return null;
+    return auth.currentUser.getIdToken();
   }
 
   const loading = authLoading || (!!user && profileLoading);
@@ -131,7 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, profile, loading, profileDiagnostics, signIn, signOut, resetPassword }}
+      value={{ user, profile, loading, profileDiagnostics, isSuperAdmin, signInWithGoogle, signOut, getIdToken }}
     >
       {children}
     </AuthContext.Provider>
