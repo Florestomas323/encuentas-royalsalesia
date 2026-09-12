@@ -208,6 +208,19 @@ export default function AdminPage() {
     }
   }
 
+  async function sembrarFichas() {
+    if (ocupado) return;
+    setOcupado(true);
+    try {
+      const r = await llamar("/api/admin/seed-product-knowledge", { method: "POST" });
+      setAviso(`Listo: ${r.sembradas} ficha(s) de producto cargadas.`);
+    } catch (e: any) {
+      setAviso(e?.message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
   async function sembrarGarantias() {
     if (ocupado) return;
     setOcupado(true);
@@ -532,8 +545,15 @@ export default function AdminPage() {
             >
               Cargar conocimiento oficial de garantías
             </button>
+            <button
+              onClick={sembrarFichas}
+              disabled={ocupado}
+              className="w-full min-h-[44px] rounded-xl bg-brand/[0.06] border border-brand/15 text-[13px] font-semibold text-brand-dark disabled:opacity-50 mt-2"
+            >
+              Cargar fichas oficiales de producto
+            </button>
             <p className="text-[12px] text-muted mt-1.5">
-              Se puede repetir sin duplicar. Solo el administrador de la plataforma puede ejecutarlo.
+              Se pueden repetir sin duplicar. Solo el administrador de la plataforma puede ejecutarlos.
             </p>
           </section>
         </div>
