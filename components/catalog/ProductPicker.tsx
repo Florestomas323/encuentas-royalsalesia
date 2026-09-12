@@ -6,12 +6,43 @@ import { Search, Package, Boxes, Check, Plus, Minus, Wrench } from "lucide-react
 
 /**
  * Selector de productos del catálogo con cantidad.
- * - products: array de { id, name, type, line, category, brand, pieceIds }
- * - value: array de items seleccionados { productId, productNameSnapshot, quantity, unitPrice, pieceIdsSnapshot }
- * - onChange(items)
- * - allowFreeText: si el catálogo está vacío, permite seguir con texto libre
- * - freeText / onFreeTextChange: valor del texto libre de respaldo
+ *
+ * NOTA (build): este archivo es .tsx, así que TypeScript exige tipos en las
+ * props y en los callbacks. Antes venían sin tipar y `value = []` se inferÍa
+ * como `never[]`, lo que rompía `next build` con 19 errores. Los tipos de abajo
+ * son la forma real de los datos: un producto del catálogo y una línea de compra.
  */
+
+/** Producto tal como lo usa el selector (subconjunto de Product/CatalogProduct). */
+export type PickerProduct = {
+  id: string;
+  name: string;
+  type?: string | null;
+  line?: string | null;
+  category?: string | null;
+  brand?: string | null;
+  pieceIds?: string[];
+  requiresPostSaleService?: boolean;
+};
+
+/** Línea de compra seleccionada. */
+export type PickerItem = {
+  productId: string;
+  productNameSnapshot: string;
+  quantity: number;
+  unitPrice?: number | null;
+  pieceIdsSnapshot: string[];
+};
+
+export type ProductPickerProps = {
+  products?: PickerProduct[];
+  value?: PickerItem[];
+  onChange?: (items: PickerItem[]) => void;
+  allowFreeText?: boolean;
+  freeText?: string;
+  onFreeTextChange?: (valor: string) => void;
+};
+
 export default function ProductPicker({
   products = [],
   value = [],
@@ -19,23 +50,27 @@ export default function ProductPicker({
   allowFreeText = true,
   freeText = "",
   onFreeTextChange,
-}) {
+}: ProductPickerProps) {
   const [q, setQ] = useState("");
 
   // Buscador compartido: sinónimos en español, plurales y prefijos, con
   // resultados en vivo mientras se escribe. Sin consulta muestra el catálogo.
-  const filtrados = useMemo(() => buscarProductos(products, q, q.trim() ? 30 : products.length), [q, products]);
+  const filtrados = useMemo(
+    () => buscarProductos(products, q, q.trim() ? 30 : products.length),
+    [q, products]
+  );
 
-  const cantidadDe = (id) => value.find((v) => v.productId === id)?.quantity || 0;
+  const cantidadDe = (id: string): number =>
+    value.find((v) => v.productId === id)?.quantity || 0;
 
-  function setCantidad(prod, cantidad) {
-    const next = value.filter((v) => v.productId !== prod.id);
+  function setCantidad(prod: PickerProduct, cantidad: number) {
+    const next: PickerItem[] = value.filter((v) => v.productId !== prod.id);
     if (cantidad > 0) {
       next.push({
         productId: prod.id,
         productNameSnapshot: prod.name,
         quantity: cantidad,
-        unitPrice: undefined, // el catálogo real no trae precio; queda manual/opcional
+        unitPrice: null, // el catálogo real no trae precio; queda manual/opcional
         pieceIdsSnapshot: prod.type === "set" ? prod.pieceIds || [] : [],
       });
     }
