@@ -3,9 +3,11 @@ import { WARRANTY_KNOWLEDGE } from "@/lib/warranty/data";
 import { requireSuperAdmin, esAuthError } from "@/lib/auth/server";
 
 // Siembra la colección GLOBAL `warrantyKnowledge` con el conocimiento oficial
-// de garantías Royal Prestige / Hy Cite. Protegido con SEED_ADMIN_SECRET (igual
-// que /api/admin/seed-users). Idempotente: usa el id de cada registro como
-// docId y merge, así que se puede reejecutar sin duplicar.
+// de garantías Royal Prestige / Hy Cite. Protegido con `requireSuperAdmin`: hay
+// que iniciar sesión y estar registrado en `systemAdmins/{uid}`, lo que se
+// verifica en el servidor contra el ID token. Ya no existe ningún secreto
+// compartido. Idempotente: usa el id de cada registro como docId y merge, así
+// que se puede reejecutar sin duplicar.
 
 function fail(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
