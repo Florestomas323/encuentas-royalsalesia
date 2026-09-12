@@ -81,6 +81,21 @@ export async function POST(req: Request) {
   const flow: CopilotFlow | null =
     body?.flow === "objection" || body?.flow === "product" || body?.flow === "warranty" ? body.flow : null;
 
+  // 3b. AUTORIZACIÓN DEL conversationId (IDOR).
+  //     El id llega del navegador y esta API escribe con Firebase Admin, que se
+  //     salta las reglas de Firestore: por eso la comprobación tiene que estar
+  //     aquí. Se valida ANTES de gastar contexto, IA o escrituras, y el uid y la
+  //     organización usados para autorizar salen del token y del perfil leído en
+  //     el servidor (pasos 1 y 2), nunca del body.
+  if (conversationId) {
+    const autorizada = await conversacionAutorizada(conversationId, uid, orgId);
+    if (!autorizada) {
+      // MISMA respuesta para: no existe, es de otro usuario o es de otra
+      // organización. Así no se puede sondear qué conversationId existen.
+      return fail("Conversación no válida. Inicia una conversación nueva.", 404);
+    }
+  }
+
   const hasCustomer = !!customerId;
   const intent = classifyIntent(message, hasCustomer, flow);
 
@@ -186,9 +201,42 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, result, intent: intent.intent, conversationId: convId });
   } catch (err: any) {
+    // El detalle (mensaje del gateway, de Firestore, stack) SOLO va a los logs
+    // del servidor. Al navegador va un mensaje genérico: los errores internos
+    // filtran nombres de proveedor, rutas y estado de la infraestructura.
     console.error("[ai/copilot]", intent.intent, err?.message);
-    const detalle = typeof err?.message === "string" ? err.message : "";
-    return fail(detalle || "No pudimos generar la respuesta en este momento.", 502);
+    return fail("No pudimos generar la respuesta en este momento. Intenta de nuevo.", 502);
+  }
+}
+
+/**
+ * ¿La conversación `conversationId` pertenece a este usuario y a su organización?
+ *
+ * Devuelve `true` solo si el documento existe, su `uid` es exactamente el del
+ * token verificado y su `organizationId` es exactamente el del perfil leído en
+ * servidor. Cualquier otro caso —no existe, es de otro usuario, es de otra
+ * organización, o la lectura falla— devuelve `false` (falla cerrado). No lanza
+ * ni distingue los motivos: el handler responde lo mismo en todos los casos.
+ */
+async function conversacionAutorizada(
+  conversationId: string,
+  uid: string,
+  orgId: string
+): Promise<boolean> {
+  try {
+    const snap = await adminDb().collection("copilotConversations").doc(conversationId).get();
+    if (!snap.exists) return false;
+    const data = snap.data() as { uid?: string; organizationId?: string } | undefined;
+    if (!data) return false;
+    if (data.uid !== uid) return false;
+    // `organizationId` se escribe siempre en persistConversation, así que forma
+    // parte del modelo: si falta o no coincide, no se autoriza.
+    if (data.organizationId !== orgId) return false;
+    return true;
+  } catch (e: any) {
+    // Fallo de lectura => se deniega. Nunca se concede acceso por un error.
+    console.error("[ai/copilot] verificación de conversación:", e?.message);
+    return false;
   }
 }
 
@@ -207,9 +255,14 @@ async function persistConversation(input: {
   onlyTestData: boolean;
 }): Promise<string> {
   const db = adminDb();
-  const convRef = input.conversationId
-    ? db.collection("copilotConversations").doc(input.conversationId)
-    : db.collection("copilotConversations").doc();
+
+  // El conversationId que llega aquí YA pasó por `conversacionAutorizada` en el
+  // handler (paso 3b): pertenece a este uid y a esta organización. Si no viene
+  // conversationId, se abre una conversación nueva con id generado en servidor.
+  const esNueva = !input.conversationId;
+  const convRef = esNueva
+    ? db.collection("copilotConversations").doc()
+    : db.collection("copilotConversations").doc(input.conversationId);
 
   await convRef.set(
     {
@@ -219,7 +272,7 @@ async function persistConversation(input: {
       lastIntent: input.intent,
       isTestData: input.onlyTestData,
       updatedAt: FieldValue.serverTimestamp(),
-      ...(input.conversationId ? {} : { createdAt: FieldValue.serverTimestamp() }),
+      ...(esNueva ? { createdAt: FieldValue.serverTimestamp() } : {}),
     },
     { merge: true }
   );
