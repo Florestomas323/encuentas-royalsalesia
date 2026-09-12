@@ -6,6 +6,14 @@ import { classifyIntent, type CopilotFlow } from "@/lib/ai/intent";
 import { COPILOT_SYSTEM, copilotPrompt } from "@/lib/ai/prompts/copilot";
 import { validateCopilotAnswer } from "@/lib/ai/validateCopilot";
 import {
+  getProductKnowledge,
+  renderTopic,
+  renderWarranty,
+  knowledgeContextText,
+  esTopicEstructurado,
+  type ProductKnowledge,
+} from "@/lib/products/productKnowledge";
+import {
   getCustomerContextServer,
   getProductContextServer,
   getProductContextById,
@@ -103,6 +111,38 @@ export async function POST(req: Request) {
   const wantsGeneralWarranty = /(reglas|pol[ií]tica|condiciones)\s+generales|garant[ií]a\s+general|en general/i.test(message);
 
   try {
+    // 3c. BASE DE CONOCIMIENTO DE PRODUCTO — respuesta SIN IA.
+    //     Cuando el vendedor toca un subtema del producto (Beneficios, Qué
+    //     incluye, Uso, Cuidados, Postventa, Recetas) o pide la garantía de un
+    //     producto concreto, la respuesta se arma con la ficha oficial de
+    //     `productKnowledge`. Es información estructurada: no hay nada que el
+    //     modelo pueda aportar y sí mucho que pueda inventar, así que ni se
+    //     llama. Si el producto todavía no tiene ficha, `pk` es null y el flujo
+    //     sigue exactamente como antes (IA con catálogo + contenido aprobado).
+    if (productId) {
+      const pk = await getProductKnowledge(productId);
+      if (pk) {
+        if (esTopicEstructurado(topic)) {
+          return NextResponse.json({
+            ok: true,
+            intent: intent.intent,
+            conversationId: conversationId || null,
+            sinIA: true,
+            result: renderTopic(pk, topic),
+          });
+        }
+        if (intent.needsWarranty && !wantsGeneralWarranty) {
+          return NextResponse.json({
+            ok: true,
+            intent: "warranty",
+            conversationId: conversationId || null,
+            sinIA: true,
+            result: renderWarranty(pk),
+          });
+        }
+      }
+    }
+
     // 4. Rehidratar SOLO el contexto que la intención necesita (menos tokens,
     //    menos lecturas). Todo aislado por organización en el servidor.
     let customerContext: string | null = null;
@@ -142,6 +182,15 @@ export async function POST(req: Request) {
       }
     }
 
+    // Pregunta abierta sobre un producto identificado: la ficha oficial se le
+    // entrega al modelo como fuente única, para que pueda reformular y adaptar
+    // el lenguaje sin añadir nada que no esté aprobado.
+    let knowledgeContext: string | null = null;
+    if (matched.length === 1) {
+      const pk: ProductKnowledge | null = await getProductKnowledge(matched[0].id);
+      if (pk) knowledgeContext = knowledgeContextText(pk);
+    }
+
     // Garantía: SIEMPRE sobre un producto. Si no hay producto identificado y no
     // se pidieron reglas generales, pedimos el producto (sin IA, sin política
     // general suelta).
@@ -175,6 +224,7 @@ export async function POST(req: Request) {
       customerContext,
       warrantyContext,
       productContext,
+      knowledgeContext,
       objection: objection || null,
       topic: topic || null,
       currency,
