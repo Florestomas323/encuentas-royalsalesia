@@ -21,7 +21,28 @@ function baseFields(ctx: Ctx) {
 }
 
 export function isOrgManager(ctx: Ctx) {
-  return ctx.profile.role === "distributor" || ctx.profile.role === "reviewer";
+  return (
+    ctx.profile.role === "super_admin" ||
+    ctx.profile.role === "distributor" ||
+    ctx.profile.role === "reviewer"
+  );
+}
+
+/**
+ * Filtros de PERTENENCIA para las consultas por cliente.
+ *
+ * Las reglas de Firestore exigen, para quien no es manager del workspace,
+ * `isOrgManager() || ownsResource()`. Y Firestore evalúa la consulta COMPLETA:
+ * si un solo documento del resultado no cumpliera la regla, rechaza la consulta
+ * entera con permission-denied. Por eso un vendedor necesita pedir
+ * explícitamente solo lo suyo: sin esto, en cuanto un cliente tenía una visita
+ * o una compra de otro vendedor, la ficha del cliente fallaba.
+ *
+ * No se relajó ninguna regla: la consulta se ajusta a lo que el vendedor ya
+ * tenía derecho a leer. El aislamiento por organizationId se mantiene siempre.
+ */
+function ownerClauses(ctx: Ctx, field: "salespersonId" | "assignedSalespersonId") {
+  return isOrgManager(ctx) ? [] : [where(field, "==", ctx.uid)];
 }
 
 // ---------- CLIENTES ----------
@@ -82,6 +103,7 @@ export async function cancelPendingServicesForCustomer(
     collection(db, "postSaleServices"),
     where("organizationId", "==", ctx.profile.organizationId),
     where("customerId", "==", customerId),
+    ...ownerClauses(ctx, "assignedSalespersonId"),
   ));
   const pendientes = snap.docs.filter((d) => (d.data() as any).status === "pending");
   if (!pendientes.length) return 0;
@@ -140,6 +162,7 @@ export async function cancelActiveFollowupsForCustomer(
     collection(db, "followups"),
     where("organizationId", "==", ctx.profile.organizationId),
     where("customerId", "==", customerId),
+    ...ownerClauses(ctx, "salespersonId"),
   ));
   const activos = snap.docs.filter((d) => {
     const f = d.data() as any;
@@ -238,6 +261,7 @@ export async function repairLoyaltyContentForNonCookingCustomers(ctx: Ctx): Prom
       collection(db, "followups"),
       where("organizationId", "==", orgId),
       where("customerId", "==", c.id),
+      ...ownerClauses(ctx, "salespersonId"),
     ));
     const aCorregir = fupSnap.docs.filter((d) => {
       const f = d.data() as any;
@@ -321,7 +345,8 @@ export async function getVisitsForCustomer(ctx: Ctx, customerId: string) {
   const snap = await getDocs(query(
     collection(db, "visits"),
     where("organizationId", "==", ctx.profile.organizationId),
-    where("customerId", "==", customerId)
+    where("customerId", "==", customerId),
+    ...ownerClauses(ctx, "salespersonId"),
   ));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
@@ -416,6 +441,7 @@ export async function getPurchasesForCustomer(ctx: Ctx, customerId: string) {
     collection(db, "purchases"),
     where("organizationId", "==", ctx.profile.organizationId),
     where("customerId", "==", customerId),
+    ...ownerClauses(ctx, "salespersonId"),
   ));
   return sortByDateDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "purchaseDate");
 }
@@ -466,7 +492,8 @@ export async function getFollowupsForCustomer(ctx: Ctx, customerId: string) {
   const snap = await getDocs(query(
     collection(db, "followups"),
     where("organizationId", "==", ctx.profile.organizationId),
-    where("customerId", "==", customerId)
+    where("customerId", "==", customerId),
+    ...ownerClauses(ctx, "salespersonId"),
   ));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
@@ -546,6 +573,7 @@ export async function getPostSaleServicesForCustomer(ctx: Ctx, customerId: strin
     collection(db, "postSaleServices"),
     where("organizationId", "==", ctx.profile.organizationId),
     where("customerId", "==", customerId),
+    ...ownerClauses(ctx, "assignedSalespersonId"),
   ));
   return sortByDateAsc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt");
 }
@@ -650,7 +678,8 @@ export async function getInteractionsForCustomer(ctx: Ctx, customerId: string) {
   const snap = await getDocs(query(
     collection(db, "customerInteractions"),
     where("organizationId", "==", ctx.profile.organizationId),
-    where("customerId", "==", customerId)
+    where("customerId", "==", customerId),
+    ...ownerClauses(ctx, "salespersonId"),
   ));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
@@ -662,7 +691,8 @@ export async function getAiProfilesForCustomer(ctx: Ctx, customerId: string) {
   const snap = await getDocs(query(
     collection(db, "aiProfiles"),
     where("organizationId", "==", ctx.profile.organizationId),
-    where("customerId", "==", customerId)
+    where("customerId", "==", customerId),
+    ...ownerClauses(ctx, "salespersonId"),
   ));
   return sortByDateDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })), "createdAt");
 }
